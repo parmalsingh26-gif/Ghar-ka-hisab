@@ -22,7 +22,7 @@ export default function Home() {
   const [vacMsg,        setVacMsg]        = useState('');
   const [loadingAll,    setLoadingAll]    = useState(false);
   const [runningTotal,  setRunningTotal]  = useState({});  // { itemId: { total, rate, amount } }
-  const [weeklyData,    setWeeklyData]    = useState({ thisWeek: 0, lastWeek: 0, unit: '' });
+  const [monthlyData,   setMonthlyData]   = useState([]); // { name, emoji, unit, morning, evening, total }
   const [budgets,       setBudgets]       = useState([]);  // budget warnings
   const [holidays,      setHolidays]      = useState([]); // today's holidays
   const [bulkSheet,     setBulkSheet]     = useState(false);
@@ -79,25 +79,24 @@ export default function Home() {
     }
     setRunningTotal(rtMap);
 
-    // Weekly comparison (all active items)
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const thisMonStart = new Date(now); thisMonStart.setDate(now.getDate() - dayOfWeek);
-    const lastMonStart = new Date(thisMonStart); lastMonStart.setDate(thisMonStart.getDate() - 7);
-    const thisDays = Array.from({length:7},(_,i) => { const d=new Date(thisMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
-    const lastDays = Array.from({length:7},(_,i) => { const d=new Date(lastMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
-    
-    const wData = [];
+    // Monthly Summary (Month-to-Date) for active month
+    const mData = [];
+    const activeMonthStr = activeDate.slice(0, 7); // e.g. "2026-07"
     for (const item of activeItems) {
-      const thisEntries = await db.entries.where('itemId').equals(item.id).filter(e => thisDays.includes(e.date)).toArray();
-      const lastEntries = await db.entries.where('itemId').equals(item.id).filter(e => lastDays.includes(e.date)).toArray();
-      const thisW = thisEntries.reduce((s,e)=>s+(e.qty||0),0);
-      const lastW = lastEntries.reduce((s,e)=>s+(e.qty||0),0);
-      if (thisW > 0 || lastW > 0) {
-        wData.push({ thisWeek: thisW, lastWeek: lastW, unit: item.unit, name: item.name, emoji: item.emoji });
+      const entries = await db.entries.where('itemId').equals(item.id)
+        .filter(e => e.date.startsWith(activeMonthStr)).toArray();
+      let morning = 0, evening = 0, total = 0;
+      entries.forEach(e => {
+        const q = e.qty || 0;
+        total += q;
+        if (e.session === 'morning') morning += q;
+        if (e.session === 'evening') evening += q;
+      });
+      if (total > 0) {
+        mData.push({ morning, evening, total, unit: item.unit, name: item.name, emoji: item.emoji });
       }
     }
-    setWeeklyData(wData);
+    setMonthlyData(mData);
 
     // Budget warnings
     const allBudgets = await db.budgets.filter(b => b.month === monthStr).toArray();
@@ -137,11 +136,14 @@ export default function Home() {
   useEffect(() => { load(); }, [load, activeDate]);
 
   // Open bulk past-entry sheet for an item
-  const openBulkEntry = (item) => {
+  const openBulkEntry = async (item) => {
     const rows = [];
     for (let i = 1; i <= 7; i++) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      rows.push({ date: d.toISOString().split('T')[0], qty: '', note: '' });
+      const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const entryList = await db.entries.where('itemId').equals(item.id).filter(e => e.date === dateStr && e.session === session).toArray();
+      const entry = entryList[0];
+      rows.push({ date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
     }
     setBulkRows(rows);
     setBulkItem(item);
@@ -277,32 +279,28 @@ export default function Home() {
         </div>
       ))}
 
-      {/* Weekly Summary */}
-      {Array.isArray(weeklyData) && weeklyData.length > 0 && (
-        <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {weeklyData.map((data, idx) => (
-            <div key={idx} style={{ borderBottom: idx !== weeklyData.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', paddingBottom: idx !== weeklyData.length - 1 ? '12px' : 0 }}>
-              <div className="text-xs text-muted mb-2 font-bold">📈 {data.emoji} {data.name} — इस हफ्ते vs पिछले हफ्ते</div>
-              <div className="weekly-compare">
-                <div>
-                  <div className="weekly-col-label">इस हफ्ते</div>
-                  <div className="weekly-col-value text-violet">
-                    {formatQty(data.thisWeek, data.unit)}
-                  </div>
+      {/* Monthly Session Summary */}
+      {Array.isArray(monthlyData) && monthlyData.length > 0 && (
+        <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
+          {monthlyData.map((data, idx) => (
+            <div key={idx} style={{ borderBottom: idx !== monthlyData.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', paddingBottom: idx !== monthlyData.length - 1 ? '12px' : 0 }}>
+              <div className="text-xs text-muted mb-2 font-bold">📈 {data.emoji} {data.name} — इस महीने का हिसाब ({activeDate.slice(0,7)})</div>
+              <div className="weekly-compare" style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <div className="weekly-col-label">{SESSION_CONFIG['morning'].icon} सुबह</div>
+                  <div className="weekly-col-value text-gold">{formatQty(data.morning, data.unit)}</div>
                 </div>
-                <div className="weekly-vs">VS</div>
-                <div>
-                  <div className="weekly-col-label">पिछले हफ्ते</div>
-                  <div className="weekly-col-value text-muted">
-                    {formatQty(data.lastWeek, data.unit)}
-                  </div>
+                <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                <div style={{ flex: 1 }}>
+                  <div className="weekly-col-label">{SESSION_CONFIG['evening'].icon} शाम</div>
+                  <div className="weekly-col-value text-violet">{formatQty(data.evening, data.unit)}</div>
+                </div>
+                <div className="weekly-vs" style={{ margin: '0 8px' }}>=</div>
+                <div style={{ flex: 1 }}>
+                  <div className="weekly-col-label">कुल</div>
+                  <div className="weekly-col-value text-green">{formatQty(data.total, data.unit)}</div>
                 </div>
               </div>
-              {data.thisWeek !== data.lastWeek && (
-                <div className={`text-xs text-center mt-2 font-bold ${data.thisWeek > data.lastWeek ? 'text-orange' : 'text-green'}`}>
-                  {data.thisWeek > data.lastWeek ? '↗ पिछले हफ्ते से ज़्यादा' : '↘ पिछले हफ्ते से कम'}
-                </div>
-              )}
             </div>
           ))}
         </div>
@@ -374,11 +372,24 @@ export default function Home() {
               ))}
             </div>
             {bulkRows.map((row, i) => (
-              <div key={row.date} className="bulk-entry-row">
-                <div className="bulk-date-label">
-                  {i === 0 ? 'कल' : i === 1 ? 'परसों' :
-                    new Date(row.date+'T00:00:00').toLocaleDateString('hi-IN', {weekday:'short', day:'numeric', month:'short'})}
-                </div>
+              <div key={i} className="bulk-entry-row flex items-center gap-2 mb-2">
+                <input
+                  className="input"
+                  style={{ width: '130px', padding: '6px 8px', fontSize: '0.8rem' }}
+                  type="date"
+                  value={row.date}
+                  onChange={async e => {
+                    const r = [...bulkRows];
+                    r[i].date = e.target.value;
+                    if (e.target.value && bulkItem) {
+                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === session).toArray();
+                      const entry = entryList[0];
+                      r[i].qty = entry?.qty != null ? entry.qty : '';
+                      r[i].note = entry?.note || '';
+                    }
+                    setBulkRows(r);
+                  }}
+                />
                 <input
                   className="bulk-qty-input"
                   type="number"

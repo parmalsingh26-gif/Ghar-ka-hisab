@@ -24,7 +24,8 @@ export default function CalendarPage() {
   const [newAdvNote, setNewAdvNote] = useState('');
 
   const load = useCallback(async () => {
-    const allItems = await db.items.where('isActive').equals(1).toArray();
+    const all = await db.items.toArray();
+    const allItems = all.filter(i => i.isActive);
     setItems(allItems);
     if (!selectedItem && allItems.length > 0) setSelectedItem(allItems[0]);
   }, [selectedItem]);

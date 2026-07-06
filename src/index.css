@@ -678,7 +678,7 @@ p  { line-height: 1.6; color: rgba(241,245,249,0.8); }
   border-top: 1px solid var(--clr-border);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   padding: var(--sp-5);
-  padding-bottom: calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
   z-index: 501;
   max-height: 85vh;
   overflow-y: auto;

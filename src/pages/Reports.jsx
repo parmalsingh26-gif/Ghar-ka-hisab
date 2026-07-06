@@ -20,7 +20,8 @@ export default function Reports() {
   const [chartTab, setChartTab] = useState('compare');
 
   const load = useCallback(async () => {
-    const its = await db.items.where('isActive').equals(1).toArray();
+    const allIts = await db.items.toArray();
+    const its = allIts.filter(i => i.isActive);
     setItems(its);
     if (!selItem && its.length > 0) setSelItem(its[0]);
     const g = await db.grocery.toArray();
