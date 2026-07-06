@@ -1,0 +1,15 @@
+{
+  "appId": "com.gharkahisab.app",
+  "appName": "Ghar Ka Hisab",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#0d0120",
+      "showSpinner": false
+    }
+  }
+}
