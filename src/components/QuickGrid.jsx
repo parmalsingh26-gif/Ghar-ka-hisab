@@ -11,14 +11,14 @@ const SESSION_CONFIG = {
 // =====================================================
 // QUICK TAP GRID — Sessions + Custom Presets
 // =====================================================
-export default function QuickGrid({ items, session, onEntryUpdate }) {
+export default function QuickGrid({ items, session, activeDate, onEntryUpdate }) {
   const [dayEntries, setDayEntries]   = useState({}); // { itemId: { session: qty } }
   const [customSheet, setCustomSheet] = useState(null);
   const [customQty,   setCustomQty]   = useState(0);
   const [customNote,  setCustomNote]  = useState('');
   const [historySheet, setHistorySheet] = useState(null);
   const [history,      setHistory]     = useState([]);
-  const today = todayStr();
+  const today = activeDate || todayStr();
 
   // Load today's entries for all items
   const loadEntries = async () => {
@@ -199,7 +199,7 @@ export default function QuickGrid({ items, session, onEntryUpdate }) {
         title={`${customSheet?.emoji} ${customSheet?.name} — Custom Entry`}
       >
         {customSheet && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 40 }}>
             <div className="text-sm text-muted text-center">
               {SESSION_CONFIG[session]?.icon} {SESSION_CONFIG[session]?.label} • {customSheet.unit}
             </div>

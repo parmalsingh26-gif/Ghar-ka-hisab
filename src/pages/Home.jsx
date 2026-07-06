@@ -32,6 +32,7 @@ export default function Home() {
   const [holidayForm,   setHolidayForm]   = useState({ date: todayStr(), name: '', autoZero: true });
   const [todaySummary,  setTodaySummary]  = useState([]); // per-item today status
   const [subsAlert,     setSubsAlert]     = useState([]); // subscriptions due today/soon
+  const [activeDate,    setActiveDate]    = useState(todayStr());
   const today = todayStr();
 
   const load = useCallback(async () => {
@@ -58,8 +59,8 @@ export default function Home() {
       setVacMsg(`बाहर गए हैं: ${vf} से ${vt} तक`);
     }
 
-    // Today's holiday check
-    const todayHolidays = await db.holidays.where('date').equals(today).toArray();
+    // Today's holiday check (for the selected activeDate)
+    const todayHolidays = await db.holidays.where('date').equals(activeDate).toArray();
     setHolidays(todayHolidays);
 
     // Running total (this month) for first active item
@@ -78,25 +79,25 @@ export default function Home() {
     }
     setRunningTotal(rtMap);
 
-    // Weekly comparison (first active item with entries)
-    const mainItem = activeItems[0];
-    if (mainItem) {
-      const now = new Date();
-      const dayOfWeek = now.getDay();
-      const thisMonStart = new Date(now); thisMonStart.setDate(now.getDate() - dayOfWeek);
-      const lastMonStart = new Date(thisMonStart); lastMonStart.setDate(thisMonStart.getDate() - 7);
-      const thisDays = Array.from({length:7},(_,i) => { const d=new Date(thisMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
-      const lastDays = Array.from({length:7},(_,i) => { const d=new Date(lastMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
-      const thisEntries = await db.entries.where('itemId').equals(mainItem.id).filter(e => thisDays.includes(e.date)).toArray();
-      const lastEntries = await db.entries.where('itemId').equals(mainItem.id).filter(e => lastDays.includes(e.date)).toArray();
-      setWeeklyData({
-        thisWeek: thisEntries.reduce((s,e)=>s+(e.qty||0),0),
-        lastWeek: lastEntries.reduce((s,e)=>s+(e.qty||0),0),
-        unit: mainItem.unit,
-        name: mainItem.name,
-        emoji: mainItem.emoji,
-      });
+    // Weekly comparison (all active items)
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const thisMonStart = new Date(now); thisMonStart.setDate(now.getDate() - dayOfWeek);
+    const lastMonStart = new Date(thisMonStart); lastMonStart.setDate(thisMonStart.getDate() - 7);
+    const thisDays = Array.from({length:7},(_,i) => { const d=new Date(thisMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
+    const lastDays = Array.from({length:7},(_,i) => { const d=new Date(lastMonStart); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; });
+    
+    const wData = [];
+    for (const item of activeItems) {
+      const thisEntries = await db.entries.where('itemId').equals(item.id).filter(e => thisDays.includes(e.date)).toArray();
+      const lastEntries = await db.entries.where('itemId').equals(item.id).filter(e => lastDays.includes(e.date)).toArray();
+      const thisW = thisEntries.reduce((s,e)=>s+(e.qty||0),0);
+      const lastW = lastEntries.reduce((s,e)=>s+(e.qty||0),0);
+      if (thisW > 0 || lastW > 0) {
+        wData.push({ thisWeek: thisW, lastWeek: lastW, unit: item.unit, name: item.name, emoji: item.emoji });
+      }
     }
+    setWeeklyData(wData);
 
     // Budget warnings
     const allBudgets = await db.budgets.filter(b => b.month === monthStr).toArray();
@@ -114,9 +115,9 @@ export default function Home() {
     // Today summary (per item)
     const summary = [];
     for (const item of activeItems) {
-      const dayTotal = await getDayTotal(item.id, today);
+      const dayTotal = await getDayTotal(item.id, activeDate);
       const sessions = getSessions(item);
-      const dayEntries = await getDayEntries(item.id, today);
+      const dayEntries = await getDayEntries(item.id, activeDate);
       const sessEntries = {};
       dayEntries.forEach(e => { sessEntries[e.session] = e.qty; });
       summary.push({ item, dayTotal, sessions, sessEntries });
@@ -131,9 +132,9 @@ export default function Home() {
       return daysUntil >= 0 && daysUntil <= 3;
     });
     setSubsAlert(dueAlerts);
-  }, [today]);
+  }, [activeDate]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, activeDate]);
 
   // Open bulk past-entry sheet for an item
   const openBulkEntry = (item) => {
@@ -199,11 +200,13 @@ export default function Home() {
   return (
     <div className="page">
       {/* Header */}
-      <div className="page-header">
+      <div className="flex items-center justify-between mb-2">
         <div>
-          <div className="page-title">घर का हिसाब</div>
-          <div className="text-muted text-sm">
-            {greeting} — {new Date().toLocaleDateString('hi-IN', { weekday:'long', day:'numeric', month:'long' })}
+          <div className="page-title" style={{marginBottom:0}}>🏠 घर का हिसाब</div>
+          <div className="flex items-center gap-2 mt-1">
+            <input type="date" className="input text-xs" style={{padding:'4px 8px', width:'auto', background:'rgba(255,255,255,0.05)'}} 
+              value={activeDate} onChange={(e) => setActiveDate(e.target.value)} max={todayStr()} />
+            <span className="text-xs text-muted"> • 🔥 {streak}</span>
           </div>
         </div>
         <StreakBadge streak={streak} />
@@ -275,29 +278,33 @@ export default function Home() {
       ))}
 
       {/* Weekly Summary */}
-      {(weeklyData.thisWeek > 0 || weeklyData.lastWeek > 0) && (
-        <div className="weekly-card">
-          <div className="text-xs text-muted mb-2 font-bold">📈 {weeklyData.emoji} {weeklyData.name} — इस हफ्ते vs पिछले हफ्ते</div>
-          <div className="weekly-compare">
-            <div>
-              <div className="weekly-col-label">इस हफ्ते</div>
-              <div className="weekly-col-value text-violet">
-                {formatQty(weeklyData.thisWeek, weeklyData.unit)}
+      {Array.isArray(weeklyData) && weeklyData.length > 0 && (
+        <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {weeklyData.map((data, idx) => (
+            <div key={idx} style={{ borderBottom: idx !== weeklyData.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', paddingBottom: idx !== weeklyData.length - 1 ? '12px' : 0 }}>
+              <div className="text-xs text-muted mb-2 font-bold">📈 {data.emoji} {data.name} — इस हफ्ते vs पिछले हफ्ते</div>
+              <div className="weekly-compare">
+                <div>
+                  <div className="weekly-col-label">इस हफ्ते</div>
+                  <div className="weekly-col-value text-violet">
+                    {formatQty(data.thisWeek, data.unit)}
+                  </div>
+                </div>
+                <div className="weekly-vs">VS</div>
+                <div>
+                  <div className="weekly-col-label">पिछले हफ्ते</div>
+                  <div className="weekly-col-value text-muted">
+                    {formatQty(data.lastWeek, data.unit)}
+                  </div>
+                </div>
               </div>
+              {data.thisWeek !== data.lastWeek && (
+                <div className={`text-xs text-center mt-2 font-bold ${data.thisWeek > data.lastWeek ? 'text-orange' : 'text-green'}`}>
+                  {data.thisWeek > data.lastWeek ? '↗ पिछले हफ्ते से ज़्यादा' : '↘ पिछले हफ्ते से कम'}
+                </div>
+              )}
             </div>
-            <div className="weekly-vs">VS</div>
-            <div>
-              <div className="weekly-col-label">पिछले हफ्ते</div>
-              <div className="weekly-col-value text-muted">
-                {formatQty(weeklyData.lastWeek, weeklyData.unit)}
-              </div>
-            </div>
-          </div>
-          {weeklyData.thisWeek !== weeklyData.lastWeek && (
-            <div className={`text-xs text-center mt-2 font-bold ${weeklyData.thisWeek > weeklyData.lastWeek ? 'text-orange' : 'text-green'}`}>
-              {weeklyData.thisWeek > weeklyData.lastWeek ? '▲' : '▼'} {formatQty(Math.abs(weeklyData.thisWeek - weeklyData.lastWeek), weeklyData.unit)} {weeklyData.thisWeek > weeklyData.lastWeek ? 'ज़्यादा' : 'कम'}
-            </div>
-          )}
+          ))}
         </div>
       )}
 
@@ -329,7 +336,7 @@ export default function Home() {
       </div>
 
       {/* Quick Grid */}
-      <QuickGrid items={items} session={session} onEntryUpdate={load} />
+      <QuickGrid items={items} session={session} activeDate={activeDate} onEntryUpdate={load} />
 
       {/* Today's Full Summary */}
       {todaySummary.some(s => s.dayTotal > 0) && (
