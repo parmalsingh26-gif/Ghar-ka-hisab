@@ -6,6 +6,7 @@ import Grocery from './pages/Grocery';
 import Vendor from './pages/Vendor';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import Split from './pages/Split';
 import { startNotificationScheduler } from './utils/notifications';
 import { getSetting, setSetting } from './db/db';
 import './index.css';
@@ -85,6 +86,7 @@ function App() {
       case 'grocery':  return <Grocery />;
       case 'vendor':   return <Vendor />;
       case 'reports':  return <Reports />;
+      case 'split':    return <Split />;
       default:         return <Home />;
     }
   };

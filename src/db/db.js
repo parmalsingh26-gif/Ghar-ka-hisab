@@ -2,7 +2,7 @@ import Dexie from 'dexie';
 
 export const db = new Dexie('GharKaHisabDB');
 
-db.version(2).stores({
+db.version(3).stores({
   // Daily consumable item definitions
   // presets: JSON string e.g. "[250,500,1000]" (in ml/grams)
   // sessions: JSON string e.g. '["morning","evening"]' which sessions this item has
@@ -52,6 +52,12 @@ db.version(2).stores({
 
   // Fixed subscriptions / recurring costs (rent, electricity, etc.)
   subscriptions: '++id, name, emoji, amount, billingDay, category, isActive, lastPaidDate',
+
+  // Roommate / Shared Expenses Partners
+  sharedPartners: '++id, name, isActive',
+
+  // Roommate / Shared Expenses
+  sharedExpenses: '++id, date, itemName, qty, amount, paidById, splitBetween, month',
 });
 
 // ---------- Default seed on first run ----------

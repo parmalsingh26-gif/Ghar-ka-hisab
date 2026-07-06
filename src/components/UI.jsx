@@ -57,6 +57,7 @@ export function Navbar({ active, onChange }) {
     { id: 'calendar', icon: '📅', label: 'कैलेंडर' },
     { id: 'grocery',  icon: '🛒', label: 'किराना' },
     { id: 'vendor',   icon: '🧑‍💼', label: 'विक्रेता' },
+    { id: 'split',    icon: '🤝', label: 'साझा' },
     { id: 'reports',  icon: '📊', label: 'रिपोर्ट' },
   ];
   return (

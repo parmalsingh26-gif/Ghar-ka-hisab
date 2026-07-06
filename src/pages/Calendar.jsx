@@ -19,6 +19,7 @@ export default function CalendarPage() {
   const [advanceSheet, setAdvanceSheet] = useState(false);
   const [rateSheet, setRateSheet]   = useState(false);
   const [newRate, setNewRate]       = useState('');
+  const [rateUnit, setRateUnit]     = useState('base');
   const [newRateDate, setNewRateDate] = useState(new Date().toISOString().split('T')[0]);
   const [newAdvAmt, setNewAdvAmt]   = useState('');
   const [newAdvNote, setNewAdvNote] = useState('');
@@ -55,10 +56,14 @@ export default function CalendarPage() {
 
   const addRate = async () => {
     if (!newRate || !selectedItem) return;
-    await db.rates.add({ itemId: selectedItem.id, rate: +newRate, effectiveFrom: newRateDate });
+    let finalRate = +newRate;
+    if (rateUnit === 'liter' && selectedItem.unit === 'ml') finalRate = finalRate / 1000;
+    if (rateUnit === 'kg' && selectedItem.unit === 'gram') finalRate = finalRate / 1000;
+    
+    await db.rates.add({ itemId: selectedItem.id, rate: finalRate, effectiveFrom: newRateDate });
     const r = await db.rates.where('itemId').equals(selectedItem.id).toArray();
     setRates(r);
-    showToast(`₹${newRate}/unit rate set from ${newRateDate}`);
+    showToast(`Rate updated successfully`);
     setRateSheet(false); setNewRate('');
   };
 
@@ -177,8 +182,18 @@ export default function CalendarPage() {
       {/* Rate Sheet */}
       <Sheet open={rateSheet} onClose={() => setRateSheet(false)} title="💰 Rate बदलें">
         <div className="input-group">
-          <label className="input-label">नया Rate (₹ per {selectedItem?.unit})</label>
-          <input className="input" type="number" value={newRate} onChange={e => setNewRate(e.target.value)} placeholder="जैसे: 62" />
+          <label className="input-label">नया Rate</label>
+          <div className="flex gap-2 mb-2">
+            <button className={`btn btn-sm flex-1 ${rateUnit === 'base' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setRateUnit('base')}>
+              Per {selectedItem?.unit}
+            </button>
+            {(selectedItem?.unit === 'ml' || selectedItem?.unit === 'gram') && (
+              <button className={`btn btn-sm flex-1 ${rateUnit !== 'base' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setRateUnit(selectedItem.unit === 'ml' ? 'liter' : 'kg')}>
+                Per {selectedItem.unit === 'ml' ? 'Liter' : 'Kg'}
+              </button>
+            )}
+          </div>
+          <input className="input" type="number" value={newRate} onChange={e => setNewRate(e.target.value)} placeholder={`जैसे: ${rateUnit === 'base' ? '0.06' : '60'}`} />
         </div>
         <div className="input-group">
           <label className="input-label">किस तारीख से?</label>
