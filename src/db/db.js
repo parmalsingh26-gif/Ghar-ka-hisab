@@ -168,6 +168,10 @@ export async function upsertEntry(itemId, date, qty, note = '', session = 'morni
   }
 }
 
+export async function deleteEntry(id) {
+  return db.entries.delete(id);
+}
+
 // Get all entries for item+date (all sessions)
 export async function getDayEntries(itemId, date) {
   return db.entries.where({ itemId, date }).toArray();

@@ -25,6 +25,7 @@ export default function Home() {
   const [monthlyData,   setMonthlyData]   = useState([]); // { name, emoji, unit, morning, evening, total }
   const [budgets,       setBudgets]       = useState([]);  // budget warnings
   const [holidays,      setHolidays]      = useState([]); // today's holidays
+  const [bulkSession,   setBulkSession]   = useState('morning');
   const [bulkSheet,     setBulkSheet]     = useState(false);
   const [bulkItem,      setBulkItem]      = useState(null);
   const [bulkRows,      setBulkRows]      = useState([]);  // [{ date, qty, note }]
@@ -137,13 +138,20 @@ export default function Home() {
 
   // Open bulk past-entry sheet for an item
   const openBulkEntry = async (item) => {
+    let activeBulkSession = session;
+    const itemSessions = getSessions(item);
+    if (!itemSessions.includes(activeBulkSession)) {
+      activeBulkSession = itemSessions[0] || 'morning';
+    }
+    setBulkSession(activeBulkSession);
+
     const rows = [];
     for (let i = 1; i <= 7; i++) {
       const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const entryList = await db.entries.where('itemId').equals(item.id).filter(e => e.date === dateStr && e.session === session).toArray();
+      const entryList = await db.entries.where('itemId').equals(item.id).filter(e => e.date === dateStr && e.session === activeBulkSession).toArray();
       const entry = entryList[0];
-      rows.push({ date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
+      rows.push({ id: entry?.id, date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
     }
     setBulkRows(rows);
     setBulkItem(item);
@@ -154,7 +162,10 @@ export default function Home() {
     let saved = 0;
     for (const row of bulkRows) {
       if (row.qty !== '' && row.qty !== null) {
-        await upsertEntry(bulkItem.id, row.date, +row.qty, row.note || '', session);
+        await upsertEntry(bulkItem.id, row.date, +row.qty, row.note || '', bulkSession);
+        saved++;
+      } else if (row.id) {
+        await db.entries.delete(row.id);
         saved++;
       }
     }
@@ -371,6 +382,30 @@ export default function Home() {
                 >{it.emoji} {it.name}</button>
               ))}
             </div>
+            
+            <div className="flex justify-center mb-3">
+              {getSessions(bulkItem).map(s => (
+                <button key={s} 
+                  className={`btn btn-sm ${bulkSession === s ? 'btn-outline' : ''}`}
+                  style={{ border: bulkSession === s ? `1px solid ${SESSION_CONFIG[s].color}` : 'none', color: bulkSession === s ? SESSION_CONFIG[s].color : 'rgba(255,255,255,0.4)', background: 'transparent' }}
+                  onClick={async () => {
+                    const activeBulkSession = s;
+                    setBulkSession(activeBulkSession);
+                    const rows = [];
+                    for (let i = 1; i <= 7; i++) {
+                      const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
+                      const dateStr = d.toISOString().split('T')[0];
+                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(e => e.date === dateStr && e.session === activeBulkSession).toArray();
+                      const entry = entryList[0];
+                      rows.push({ id: entry?.id, date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
+                    }
+                    setBulkRows(rows);
+                  }}
+                >
+                  {SESSION_CONFIG[s].icon} {SESSION_CONFIG[s].label}
+                </button>
+              ))}
+            </div>
             {bulkRows.map((row, i) => (
               <div key={i} className="bulk-entry-row flex items-center gap-2 mb-2">
                 <input
@@ -382,8 +417,9 @@ export default function Home() {
                     const r = [...bulkRows];
                     r[i].date = e.target.value;
                     if (e.target.value && bulkItem) {
-                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === session).toArray();
+                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === bulkSession).toArray();
                       const entry = entryList[0];
+                      r[i].id = entry?.id;
                       r[i].qty = entry?.qty != null ? entry.qty : '';
                       r[i].note = entry?.note || '';
                     }

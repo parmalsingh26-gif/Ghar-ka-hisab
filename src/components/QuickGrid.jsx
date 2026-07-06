@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { showToast, Sheet, QtyStepper } from './UI';
-import db, { upsertEntry, getDayEntries, getPresets, getSessions, formatQty, todayStr } from '../db/db';
+import db, { upsertEntry, deleteEntry, getDayEntries, getPresets, getSessions, formatQty, todayStr } from '../db/db';
 
 const SESSION_CONFIG = {
   morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)' },
@@ -18,6 +18,9 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   const [customNote,  setCustomNote]  = useState('');
   const [historySheet, setHistorySheet] = useState(null);
   const [history,      setHistory]     = useState([]);
+  const [historyFromDate, setHistoryFromDate] = useState('');
+  const [historyToDate,   setHistoryToDate]   = useState('');
+  const [customEditMeta,  setCustomEditMeta]  = useState(null); // { date, session, id }
   const today = activeDate || todayStr();
 
   // Load today's entries for all items
@@ -47,36 +50,59 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   const handleCustomSave = async () => {
     if (!customSheet) return;
     try {
-      await upsertEntry(customSheet.id, today, customQty, customNote, session);
+      const d = customEditMeta ? customEditMeta.date : today;
+      const s = customEditMeta ? customEditMeta.session : session;
+      await upsertEntry(customSheet.id, d, customQty, customNote, s);
       showToast(`${customSheet.emoji} ${customSheet.name} — ${formatQty(customQty, customSheet.unit)} ✓`);
       await loadEntries();
       onEntryUpdate?.();
+      if (customEditMeta && historySheet) await loadHistory(historySheet, historyFromDate, historyToDate);
       setCustomSheet(null);
+      setCustomEditMeta(null);
       setCustomNote('');
     } catch { showToast('Save नहीं हुआ', 'error'); }
   };
 
-  const handleZero = async (item) => {
+  const handleZero = async (item, isCustom = false) => {
     try {
-      await upsertEntry(item.id, today, 0, 'नहीं मिला', session);
+      const d = (isCustom && customEditMeta) ? customEditMeta.date : today;
+      const s = (isCustom && customEditMeta) ? customEditMeta.session : session;
+      await upsertEntry(item.id, d, 0, 'नहीं मिला', s);
       showToast(`${item.name} — नहीं मिला`, 'info');
       await loadEntries();
       onEntryUpdate?.();
+      if (isCustom && customEditMeta && historySheet) await loadHistory(historySheet, historyFromDate, historyToDate);
     } catch {}
   };
 
-  const openHistory = async (item) => {
-    const past7 = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const ds = d.toISOString().split('T')[0];
-      const entries = await db.entries.where({ itemId: item.id, date: ds }).toArray();
-      const total = entries.reduce((s, e) => s + (e.qty || 0), 0);
-      const sessions = entries.map(e => ({ session: e.session, qty: e.qty, note: e.note }));
-      past7.push({ date: ds, total, sessions });
+  const loadHistory = async (item, fromD, toD) => {
+    const entries = await db.entries.where('itemId').equals(item.id).toArray();
+    const filtered = entries.filter(e => (!fromD || e.date >= fromD) && (!toD || e.date <= toD));
+    const byDate = {};
+    for (const e of filtered) {
+      if (!byDate[e.date]) byDate[e.date] = { date: e.date, total: 0, sessions: [] };
+      byDate[e.date].total += e.qty || 0;
+      byDate[e.date].sessions.push({ id: e.id, session: e.session, qty: e.qty, note: e.note });
     }
-    setHistory(past7);
+    const sortedDates = Object.keys(byDate).sort((a,b) => b.localeCompare(a));
+    setHistory(sortedDates.map(d => byDate[d]));
+  };
+
+  const openHistory = async (item) => {
+    const toD = todayStr();
+    setHistoryFromDate('');
+    setHistoryToDate(toD);
     setHistorySheet(item);
+    await loadHistory(item, '', toD);
+  };
+
+  const handleDeleteHistory = async (id) => {
+    if (window.confirm("Delete this entry?")) {
+      await deleteEntry(id);
+      await loadEntries();
+      onEntryUpdate?.();
+      await loadHistory(historySheet, historyFromDate, historyToDate);
+    }
   };
 
   const activeItems = items.filter(it => {
@@ -195,7 +221,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
       {/* Custom Qty Sheet */}
       <Sheet
         open={!!customSheet}
-        onClose={() => setCustomSheet(null)}
+        onClose={() => { setCustomSheet(null); setCustomEditMeta(null); }}
         title={`${customSheet?.emoji} ${customSheet?.name} — Custom Entry`}
       >
         {customSheet && (
@@ -251,7 +277,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
             </div>
 
             <div className="flex gap-3">
-              <button className="btn btn-danger flex-1" onClick={() => handleZero(customSheet).then(() => setCustomSheet(null))}>
+              <button className="btn btn-danger flex-1" onClick={() => handleZero(customSheet, true).then(() => { setCustomSheet(null); setCustomEditMeta(null); })}>
                 ✗ नहीं मिला
               </button>
               <button className="btn btn-primary flex-1" onClick={handleCustomSave}>
@@ -262,33 +288,65 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
         )}
       </Sheet>
 
-      {/* 7-Day History Sheet */}
+      {/* History Sheet */}
       <Sheet
         open={!!historySheet}
         onClose={() => setHistorySheet(null)}
-        title={`${historySheet?.emoji} ${historySheet?.name} — पिछले 7 दिन`}
+        title={`${historySheet?.emoji} ${historySheet?.name} — History`}
       >
+        <div className="flex gap-2 mb-4">
+          <div className="flex-1">
+            <label className="text-xs text-muted block mb-1">From</label>
+            <input type="date" className="input" style={{padding: '4px', fontSize: '0.8rem'}} value={historyFromDate} onChange={e => {
+              setHistoryFromDate(e.target.value);
+              loadHistory(historySheet, e.target.value, historyToDate);
+            }} />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-muted block mb-1">To</label>
+            <input type="date" className="input" style={{padding: '4px', fontSize: '0.8rem'}} value={historyToDate} onChange={e => {
+              setHistoryToDate(e.target.value);
+              loadHistory(historySheet, historyFromDate, e.target.value);
+            }} />
+          </div>
+        </div>
+
         {history.map((day, i) => (
-          <div key={day.date} className="list-item" style={{ marginBottom: 8 }}>
-            <div style={{ flex: 1 }}>
+          <div key={day.date} className="list-item" style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
+            <div className="flex justify-between items-center mb-2">
               <div className="font-semi text-sm">
-                {i === 0 ? 'आज' : i === 1 ? 'कल' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric' })}
+                {day.date === today ? 'आज' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric', month: 'short' })} ({day.date})
               </div>
-              <div className="flex gap-2 mt-1">
-                {day.sessions.map(s => (
-                  <span key={s.session} className={`badge ${s.qty === 0 ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.68rem' }}>
+              <div className="font-bold text-gold">
+                {day.total > 0 ? formatQty(day.total, historySheet?.unit) : '—'}
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-2 mt-1">
+              {day.sessions.map(s => (
+                <div key={s.id || s.session} className="flex justify-between items-center" style={{ background: 'rgba(255,255,255,0.03)', padding: '6px', borderRadius: '8px' }}>
+                  <span className={`badge ${s.qty === 0 ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.68rem' }}>
                     {SESSION_CONFIG[s.session]?.icon} {formatQty(s.qty, historySheet?.unit)}
                     {s.note && ` · ${s.note}`}
                   </span>
-                ))}
-                {day.sessions.length === 0 && <span className="badge badge-orange" style={{ fontSize: '0.68rem' }}>⚪ No entry</span>}
-              </div>
-            </div>
-            <div className="font-bold text-gold">
-              {day.total > 0 ? formatQty(day.total, historySheet?.unit) : '—'}
+                  <div className="flex gap-1">
+                    <button className="btn-icon-xs" style={{ border: '1px solid rgba(255,255,255,0.1)' }} onClick={() => {
+                      setCustomQty(s.qty);
+                      setCustomNote(s.note || '');
+                      setCustomEditMeta({ date: day.date, session: s.session, id: s.id });
+                      setCustomSheet(historySheet);
+                    }}>✏️</button>
+                    <button className="btn-icon-xs btn-red" onClick={() => handleDeleteHistory(s.id)}>🗑️</button>
+                  </div>
+                </div>
+              ))}
+              {day.sessions.length === 0 && <span className="badge badge-orange" style={{ fontSize: '0.68rem', alignSelf: 'flex-start' }}>⚪ No entry</span>}
             </div>
           </div>
         ))}
+        {history.length === 0 && (
+           <div className="text-center text-muted mt-4">कोई एंट्री नहीं मिली</div>
+        )}
       </Sheet>
     </>
   );
