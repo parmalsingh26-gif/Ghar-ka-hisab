@@ -35,10 +35,10 @@ export default function Home() {
   const [subsAlert,     setSubsAlert]     = useState([]); // subscriptions due today/soon
   const [activeDate,    setActiveDate]    = useState(todayStr());
   // Auto-Fill / Copy Pattern state
-  const [autoFillMode,  setAutoFillMode]  = useState(false);
-  const [autoFillQty,   setAutoFillQty]   = useState('');
-  const [autoFillFrom,  setAutoFillFrom]  = useState(todayStr());
-  const [autoFillTo,    setAutoFillTo]    = useState(todayStr());
+  const [autoFillMode,    setAutoFillMode]    = useState(false);
+  const [autoFillQty,     setAutoFillQty]     = useState('');
+  const [autoFillFrom,    setAutoFillFrom]    = useState(() => new Date().toISOString().slice(0, 7) + '-01'); // 1st of this month
+  const [autoFillTo,      setAutoFillTo]      = useState(todayStr());
   const [autoFillLoading, setAutoFillLoading] = useState(false);
   const today = todayStr();
 
@@ -130,8 +130,8 @@ export default function Home() {
     }
     setTodaySummary(summary);
 
-    // Subscriptions due soon
-    const allSubs = await db.subscriptions.where('isActive').equals(1).toArray();
+    // Subscriptions due soon (fix isActive filter)
+    const allSubs = await db.subscriptions.filter(s => !!s.isActive).toArray();
     const todayD = new Date();
     const dueAlerts = allSubs.filter(s => {
       const daysUntil = s.billingDay - todayD.getDate();

@@ -75,7 +75,7 @@ export default function Settings() {
   const saveVacDates = async () => {
     await setSetting('vacationFrom', vacFrom);
     await setSetting('vacationTo',   vacTo);
-    const allItems = await db.items.where('isActive').equals(1).toArray();
+    const allItems = await db.items.filter(i => !!i.isActive).toArray();
     const start = new Date(vacFrom+'T00:00:00');
     const end   = new Date(vacTo+'T00:00:00');
     let d = new Date(start);

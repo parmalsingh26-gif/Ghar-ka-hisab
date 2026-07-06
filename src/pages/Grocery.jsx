@@ -8,11 +8,12 @@ import { showToast, AutocompleteInput, Sheet } from '../components/UI';
 const CATEGORIES = ['अनाज','दाल','तेल','मसाले','सब्जी','फल','डेयरी','Snacks','अन्य'];
 
 export default function Grocery() {
-  const [items, setItems]       = useState([]);
-  const [addSheet, setAddSheet] = useState(false);
+  const [items, setItems]           = useState([]);
+  const [addSheet, setAddSheet]     = useState(false);
+  const [editSheet, setEditSheet]   = useState(null); // item being edited
   const [detailItem, setDetailItem] = useState(null);
-  const [filterCat, setFilterCat]  = useState('');
-  const [sortBy, setSortBy]        = useState('name');
+  const [filterCat, setFilterCat]   = useState('');
+  const [sortBy, setSortBy]         = useState('name');
   const [form, setForm] = useState({
     name: '', qty: '', unit: 'Kg', price: '', purchaseDate: new Date().toISOString().split('T')[0],
     expiryDate: '', category: 'अनाज'
@@ -49,6 +50,32 @@ export default function Grocery() {
   const handleDelete = async (id) => {
     await db.grocery.delete(id);
     showToast('हटा दिया गया', 'info');
+    setDetailItem(null);
+    load();
+  };
+
+  const openEdit = (item) => {
+    setForm({
+      name: item.name,
+      qty: item.qty.toString(),
+      unit: item.unit,
+      price: item.price.toString(),
+      purchaseDate: item.purchaseDate,
+      expiryDate: item.expiryDate || '',
+      category: item.category || 'अनाज',
+    });
+    setEditSheet(item);
+  };
+
+  const handleEdit = async () => {
+    if (!form.name || !form.qty) { showToast('नाम और मात्रा जरूरी है', 'error'); return; }
+    await db.grocery.update(editSheet.id, {
+      name: form.name, qty: +form.qty, unit: form.unit,
+      price: +form.price || 0, purchaseDate: form.purchaseDate,
+      expiryDate: form.expiryDate || null, category: form.category,
+    });
+    showToast(`${form.name} — update हो गया ✓`);
+    setEditSheet(null);
     setDetailItem(null);
     load();
   };
@@ -237,12 +264,52 @@ export default function Grocery() {
                   ))}
                 </div>
               )}
-              <button className="btn btn-danger btn-sm btn-block" onClick={() => handleDelete(detailItem.id)}>
-                🗑️ हटाएं
-              </button>
+              <div className="flex gap-2 mt-2">
+                <button className="btn btn-outline flex-1" onClick={() => openEdit(detailItem)}>✏️ Edit</button>
+                <button className="btn btn-danger flex-1" onClick={() => handleDelete(detailItem.id)}>🗑️ हटाएं</button>
+              </div>
             </div>
           );
         })()}
+      </Sheet>
+
+      {/* Edit Item Sheet */}
+      <Sheet open={!!editSheet} onClose={() => setEditSheet(null)} title={`✏️ ${editSheet?.name} Edit करें`}>
+        <div className="grid-2 gap-3 mb-3">
+          <div className="input-group">
+            <label className="input-label">मात्रा *</label>
+            <input className="input" type="number" value={form.qty} onChange={e => setForm(f => ({...f, qty: e.target.value}))} />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Unit</label>
+            <select className="select" value={form.unit} onChange={e => setForm(f => ({...f, unit: e.target.value}))}>
+              {['Kg','Litre','Packet','Piece','Dozen','Box','Can'].map(u => <option key={u}>{u}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="grid-2 gap-3 mb-3">
+          <div className="input-group">
+            <label className="input-label">कीमत (₹)</label>
+            <input className="input" type="number" value={form.price} onChange={e => setForm(f => ({...f, price: e.target.value}))} />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Category</label>
+            <select className="select" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))}>
+              {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="grid-2 gap-3 mb-3">
+          <div className="input-group">
+            <label className="input-label">खरीदी तारीख</label>
+            <input className="input" type="date" value={form.purchaseDate} onChange={e => setForm(f => ({...f, purchaseDate: e.target.value}))} />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Expiry Date</label>
+            <input className="input" type="date" value={form.expiryDate} onChange={e => setForm(f => ({...f, expiryDate: e.target.value}))} />
+          </div>
+        </div>
+        <button className="btn btn-primary btn-block" onClick={handleEdit}>✓ Update करें</button>
       </Sheet>
     </div>
   );

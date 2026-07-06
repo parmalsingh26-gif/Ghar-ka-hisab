@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { showToast, Sheet, QtyStepper } from './UI';
 import db, { upsertEntry, deleteEntry, getDayEntries, getPresets, getSessions, formatQty, todayStr } from '../db/db';
 
@@ -20,11 +20,12 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   const [history,      setHistory]     = useState([]);
   const [historyFromDate, setHistoryFromDate] = useState('');
   const [historyToDate,   setHistoryToDate]   = useState('');
-  const [customEditMeta,  setCustomEditMeta]  = useState(null); // { date, session, id }
+  const [customEditMeta,  setCustomEditMeta]  = useState(null);
+  const [tapping,         setTapping]         = useState(null); // { itemId, preset } for visual feedback
   const today = activeDate || todayStr();
 
   // Load today's entries for all items
-  const loadEntries = async () => {
+  const loadEntries = useCallback(async () => {
     const map = {};
     for (const item of items) {
       const entries = await getDayEntries(item.id, today);
@@ -32,9 +33,9 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
       entries.forEach(e => { map[item.id][e.session] = { qty: e.qty, note: e.note }; });
     }
     setDayEntries(map);
-  };
+  }, [items, today]);
 
-  useEffect(() => { if (items.length) loadEntries(); }, [items, today]);
+  useEffect(() => { if (items.length) loadEntries(); }, [loadEntries]);
 
   const handlePresetTap = async (item, presetQty) => {
     const existing = dayEntries[item.id]?.[session];

@@ -1116,3 +1116,43 @@ p  { line-height: 1.6; color: rgba(241,245,249,0.8); }
   color: var(--clr-red);
 }
 
+/* --- Missing Utility Classes --- */
+.btn-icon-xs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all var(--t-fast);
+  color: #f1f5f9;
+  flex-shrink: 0;
+}
+.btn-icon-xs:hover { background: rgba(255,255,255,0.12); }
+.btn-icon-xs.btn-red { background: rgba(239,68,68,0.15); color: var(--clr-red); }
+.btn-icon-xs.btn-red:hover { background: rgba(239,68,68,0.28); }
+
+.ml-2 { margin-left: 8px; }
+.mt-1 { margin-top: 4px; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mb-1 { margin-bottom: 4px; }
+.mb-2 { margin-bottom: 8px; }
+
+.text-2xl { font-size: 1.5rem; font-weight: 800; }
+.text-red  { color: var(--clr-red) !important; }
+
+/* --- Flex wrap --- */
+.flex-wrap { flex-wrap: wrap; }
+
+/* --- Tap Pulse Animation --- */
+@keyframes tapPulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+.tap-pulse { animation: tapPulse 0.2s var(--ease-spring); }

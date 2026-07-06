@@ -81,7 +81,7 @@ export default function CalendarPage() {
       <div className="page-header">
         <div className="page-title">📅 कैलेंडर</div>
         <div className="flex gap-2">
-          <button className="btn btn-outline btn-sm btn-icon" onClick={() => setRateSheet(true)} title="Rate बदलें">💰</button>
+          <button className="btn btn-outline btn-sm btn-icon" onClick={() => { setRateUnit('base'); setRateSheet(true); }} title="Rate बदलें">💰</button>
           <button className="btn btn-outline btn-sm btn-icon" onClick={() => setAdvanceSheet(true)} title="Advance">💵</button>
         </div>
       </div>

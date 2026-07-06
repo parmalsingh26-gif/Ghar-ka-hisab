@@ -49,10 +49,12 @@ export default function Reports() {
   const lastSum = monthlySummary(lastMonthE, currentRate);
   const diff    = thisSum.total - lastSum.total;
 
-  // Daily trend data
+  // Daily trend data — aggregate qty per date across all sessions
   const days = getDaysInMonth(year, month);
   const entryMapThis = {};
-  thisMonthE.forEach(e => { entryMapThis[e.date] = e.qty; });
+  thisMonthE.forEach(e => {
+    entryMapThis[e.date] = (entryMapThis[e.date] || 0) + (e.qty || 0);
+  });
   const trendData   = days.map(d => entryMapThis[d] ?? 0);
   const trendLabels = days.map(d => d.split('-')[2]);
 
@@ -172,9 +174,12 @@ export default function Reports() {
       {thisMonthE.length === 0 ? (
         <div className="text-muted text-sm">इस महीने कोई entry नहीं</div>
       ) : (
-        thisMonthE.sort((a,b)=>b.date.localeCompare(a.date)).map(e => (
+        [...thisMonthE].sort((a,b) => b.date.localeCompare(a.date) || b.session?.localeCompare(a.session || '')).map(e => (
           <div key={e.id} className="split-row">
             <span className="text-sm">{formatDate(e.date)}</span>
+            <span className="badge badge-violet" style={{fontSize:'0.65rem'}}>
+              {e.session === 'morning' ? '🌅' : e.session === 'evening' ? '🌆' : '🌙'} {e.session || ''}
+            </span>
             <span className="font-bold">{e.qty} {selItem?.unit}</span>
             {currentRate > 0 && <span className="text-gold text-sm">{formatRupees((e.qty||0)*currentRate)}</span>}
           </div>
