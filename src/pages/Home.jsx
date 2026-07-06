@@ -34,6 +34,12 @@ export default function Home() {
   const [todaySummary,  setTodaySummary]  = useState([]); // per-item today status
   const [subsAlert,     setSubsAlert]     = useState([]); // subscriptions due today/soon
   const [activeDate,    setActiveDate]    = useState(todayStr());
+  // Auto-Fill / Copy Pattern state
+  const [autoFillMode,  setAutoFillMode]  = useState(false);
+  const [autoFillQty,   setAutoFillQty]   = useState('');
+  const [autoFillFrom,  setAutoFillFrom]  = useState(todayStr());
+  const [autoFillTo,    setAutoFillTo]    = useState(todayStr());
+  const [autoFillLoading, setAutoFillLoading] = useState(false);
   const today = todayStr();
 
   const load = useCallback(async () => {
@@ -172,6 +178,41 @@ export default function Home() {
     showToast(`✓ ${saved} entries save हो गईं`);
     setBulkSheet(false);
     load();
+  };
+
+  // Auto-Fill / Copy Pattern - apply same qty for a date range
+  const handleAutoFill = async () => {
+    if (!autoFillQty || !autoFillFrom || !autoFillTo || !bulkItem) {
+      showToast('Qty aur Date range bharo', 'error');
+      return;
+    }
+    if (autoFillFrom > autoFillTo) {
+      showToast('"Kab Se" date "Kab Tak" se pahle honi chahiye', 'error');
+      return;
+    }
+    setAutoFillLoading(true);
+    try {
+      // Get holidays in this range to skip them
+      const holidays = await db.holidays.toArray();
+      const holidayDates = new Set(holidays.filter(h => h.autoZero).map(h => h.date));
+
+      const d = new Date(autoFillFrom + 'T00:00:00');
+      const end = new Date(autoFillTo + 'T00:00:00');
+      let count = 0;
+      while (d <= end) {
+        const ds = d.toISOString().split('T')[0];
+        if (!holidayDates.has(ds)) {
+          await upsertEntry(bulkItem.id, ds, +autoFillQty, 'Auto-Fill', bulkSession);
+          count++;
+        }
+        d.setDate(d.getDate() + 1);
+      }
+      showToast(`⚡ ${count} din ki entry fill ho gayi!`);
+      setAutoFillMode(false);
+      setBulkSheet(false);
+      load();
+    } catch { showToast('Auto-Fill mein error aayi', 'error'); }
+    finally { setAutoFillLoading(false); }
   };
 
   const handleAllNormal = async () => {
@@ -371,9 +412,10 @@ export default function Home() {
       )}
 
       {/* Bulk Past Entry Sheet */}
-      <Sheet open={bulkSheet} onClose={() => setBulkSheet(false)} title="📅 पिछले दिनों की Entry">
+      <Sheet open={bulkSheet} onClose={() => { setBulkSheet(false); setAutoFillMode(false); }} title="📅 पिछले दिनों की Entry">
         {bulkItem && (
           <>
+            {/* Item Selector */}
             <div className="flex gap-2 mb-4 scroll-x">
               {items.filter(i=>i.isActive).map(it => (
                 <button key={it.id} style={{flexShrink:0}}
@@ -382,10 +424,11 @@ export default function Home() {
                 >{it.emoji} {it.name}</button>
               ))}
             </div>
-            
+
+            {/* Session Selector */}
             <div className="flex justify-center mb-3">
               {getSessions(bulkItem).map(s => (
-                <button key={s} 
+                <button key={s}
                   className={`btn btn-sm ${bulkSession === s ? 'btn-outline' : ''}`}
                   style={{ border: bulkSession === s ? `1px solid ${SESSION_CONFIG[s].color}` : 'none', color: bulkSession === s ? SESSION_CONFIG[s].color : 'rgba(255,255,255,0.4)', background: 'transparent' }}
                   onClick={async () => {
@@ -406,49 +449,136 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            {bulkRows.map((row, i) => (
-              <div key={i} className="bulk-entry-row flex items-center gap-2 mb-2">
-                <input
-                  className="input"
-                  style={{ width: '130px', padding: '6px 8px', fontSize: '0.8rem' }}
-                  type="date"
-                  value={row.date}
-                  onChange={async e => {
-                    const r = [...bulkRows];
-                    r[i].date = e.target.value;
-                    if (e.target.value && bulkItem) {
-                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === bulkSession).toArray();
-                      const entry = entryList[0];
-                      r[i].id = entry?.id;
-                      r[i].qty = entry?.qty != null ? entry.qty : '';
-                      r[i].note = entry?.note || '';
-                    }
-                    setBulkRows(r);
-                  }}
-                />
-                <input
-                  className="bulk-qty-input"
-                  type="number"
-                  placeholder={`${bulkItem.unit}`}
-                  value={row.qty}
-                  onChange={e => { const r=[...bulkRows]; r[i].qty=e.target.value; setBulkRows(r); }}
-                  step={bulkItem.unit==='ml'||bulkItem.unit==='gram'?50:0.5}
-                />
-                <input
-                  className="input flex-1"
-                  style={{fontSize:'0.8rem',padding:'6px 10px'}}
-                  placeholder="Note..."
-                  value={row.note}
-                  onChange={e => { const r=[...bulkRows]; r[i].note=e.target.value; setBulkRows(r); }}
-                />
+
+            {/* Auto-Fill Toggle */}
+            <div
+              className={`card mb-3`}
+              style={{
+                padding: '10px 14px',
+                background: autoFillMode ? 'rgba(245,166,35,0.08)' : 'rgba(255,255,255,0.04)',
+                border: autoFillMode ? '1px solid rgba(245,166,35,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 12,
+                cursor: 'pointer',
+              }}
+              onClick={() => setAutoFillMode(m => !m)}
+            >
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="font-semi text-sm">⚡ Auto-Fill (Copy Pattern)</div>
+                  <div className="text-xs text-muted">एक ही qty को कई दिनों में एक साथ भरें</div>
+                </div>
+                <span style={{ fontSize: '1.2rem', color: autoFillMode ? 'var(--clr-gold)' : 'rgba(255,255,255,0.3)' }}>
+                  {autoFillMode ? '▲' : '▼'}
+                </span>
               </div>
-            ))}
-            <button className="btn btn-primary btn-block mt-3" onClick={saveBulkEntries}>
-              ✓ सभी Save करें
-            </button>
+            </div>
+
+            {/* Auto-Fill Panel */}
+            {autoFillMode && (
+              <div className="card mb-4" style={{ padding: 14, background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: 14 }}>
+                <div className="grid-2 gap-3 mb-3">
+                  <div className="input-group">
+                    <label className="input-label">Qty ({bulkItem.unit}) *</label>
+                    <input
+                      className="input"
+                      type="number"
+                      value={autoFillQty}
+                      onChange={e => setAutoFillQty(e.target.value)}
+                      placeholder={`जैसे: ${(bulkItem.presets ? JSON.parse(bulkItem.presets)[0] : bulkItem.defaultQty) || 500}`}
+                      step={bulkItem.unit === 'ml' || bulkItem.unit === 'gram' ? 50 : 0.5}
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Quick Presets</label>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {(bulkItem.presets ? JSON.parse(bulkItem.presets) : []).map(p => (
+                        <button
+                          key={p}
+                          className={`btn btn-sm ${+autoFillQty === p ? 'btn-primary' : 'btn-outline'}`}
+                          style={{ padding: '3px 10px', fontSize: '0.75rem' }}
+                          onClick={() => setAutoFillQty(p.toString())}
+                        >
+                          {bulkItem.unit === 'ml' && p >= 1000 ? `${p/1000}L` : `${p}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid-2 gap-3 mb-3">
+                  <div className="input-group">
+                    <label className="input-label">📅 कब से (From)</label>
+                    <input className="input" type="date" value={autoFillFrom} onChange={e => setAutoFillFrom(e.target.value)} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">📅 कब तक (To)</label>
+                    <input className="input" type="date" value={autoFillTo} onChange={e => setAutoFillTo(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted mb-3" style={{ lineHeight: 1.5 }}>
+                  ℹ️ Holiday mark किए दिन skip होंगे। बाकी सब दिन <b>{autoFillQty || '—'} {bulkItem.unit}</b> से fill होंगे।
+                </div>
+
+                <button
+                  className="btn btn-primary btn-block"
+                  onClick={handleAutoFill}
+                  disabled={autoFillLoading}
+                >
+                  {autoFillLoading ? <span className="spinner" /> : '⚡ Auto-Fill करें'}
+                </button>
+              </div>
+            )}
+
+            {/* Manual Entry Rows */}
+            {!autoFillMode && (
+              <>
+                {bulkRows.map((row, i) => (
+                  <div key={i} className="bulk-entry-row flex items-center gap-2 mb-2">
+                    <input
+                      className="input"
+                      style={{ width: '130px', padding: '6px 8px', fontSize: '0.8rem' }}
+                      type="date"
+                      value={row.date}
+                      onChange={async e => {
+                        const r = [...bulkRows];
+                        r[i].date = e.target.value;
+                        if (e.target.value && bulkItem) {
+                          const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === bulkSession).toArray();
+                          const entry = entryList[0];
+                          r[i].id = entry?.id;
+                          r[i].qty = entry?.qty != null ? entry.qty : '';
+                          r[i].note = entry?.note || '';
+                        }
+                        setBulkRows(r);
+                      }}
+                    />
+                    <input
+                      className="bulk-qty-input"
+                      type="number"
+                      placeholder={`${bulkItem.unit}`}
+                      value={row.qty}
+                      onChange={e => { const r=[...bulkRows]; r[i].qty=e.target.value; setBulkRows(r); }}
+                      step={bulkItem.unit==='ml'||bulkItem.unit==='gram'?50:0.5}
+                    />
+                    <input
+                      className="input flex-1"
+                      style={{fontSize:'0.8rem',padding:'6px 10px'}}
+                      placeholder="Note..."
+                      value={row.note}
+                      onChange={e => { const r=[...bulkRows]; r[i].note=e.target.value; setBulkRows(r); }}
+                    />
+                  </div>
+                ))}
+                <button className="btn btn-primary btn-block mt-3" onClick={saveBulkEntries}>
+                  ✓ सभी Save करें
+                </button>
+              </>
+            )}
           </>
         )}
       </Sheet>
+
 
       {/* Holiday Marking Sheet */}
       <Sheet open={holidaySheet} onClose={() => setHolidaySheet(false)} title="🎉 Holiday Mark करें">
