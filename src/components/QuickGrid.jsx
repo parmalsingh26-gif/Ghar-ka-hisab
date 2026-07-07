@@ -1,27 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { showToast, Sheet, QtyStepper } from './UI';
+import { showToast, Sheet } from './UI';
 import db, { upsertEntry, deleteEntry, getDayEntries, getPresets, getSessions, formatQty, todayStr } from '../db/db';
 
 const SESSION_CONFIG = {
-  morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)' },
-  evening: { label: 'शाम',  icon: '🌆', color: 'var(--clr-violet-light)' },
-  night:   { label: 'रात',  icon: '🌙', color: 'var(--clr-teal)' },
+  morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)',   grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
+  evening: { label: 'शाम',  icon: '🌆', color: 'var(--clr-violet-light)', grad: 'linear-gradient(135deg,#7c3aed,#c084fc)' },
+  night:   { label: 'रात',  icon: '🌙', color: 'var(--clr-teal)',   grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
 };
 
 // =====================================================
 // QUICK TAP GRID — Sessions + Custom Presets
+// BUG FIX: Preset tap now REPLACES qty (not adds)
+// Use +Add button to accumulate more
 // =====================================================
 export default function QuickGrid({ items, session, activeDate, onEntryUpdate }) {
-  const [dayEntries, setDayEntries]   = useState({}); // { itemId: { session: qty } }
-  const [customSheet, setCustomSheet] = useState(null);
-  const [customQty,   setCustomQty]   = useState(0);
-  const [customNote,  setCustomNote]  = useState('');
-  const [historySheet, setHistorySheet] = useState(null);
-  const [history,      setHistory]     = useState([]);
+  const [dayEntries,    setDayEntries]    = useState({}); // { itemId: { session: {qty,note} } }
+  const [customSheet,   setCustomSheet]   = useState(null);
+  const [customQty,     setCustomQty]     = useState(0);
+  const [customNote,    setCustomNote]    = useState('');
+  const [historySheet,  setHistorySheet]  = useState(null);
+  const [history,       setHistory]       = useState([]);
   const [historyFromDate, setHistoryFromDate] = useState('');
   const [historyToDate,   setHistoryToDate]   = useState('');
   const [customEditMeta,  setCustomEditMeta]  = useState(null);
-  const [tapping,         setTapping]         = useState(null); // { itemId, preset } for visual feedback
+  const [tappingId,       setTappingId]       = useState(null); // item id for visual feedback
+  const [addMoreSheet,    setAddMoreSheet]    = useState(null); // for +More mode
+  const [addMoreQty,      setAddMoreQty]      = useState(0);
   const today = activeDate || todayStr();
 
   // Load today's entries for all items
@@ -37,15 +41,30 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
 
   useEffect(() => { if (items.length) loadEntries(); }, [loadEntries]);
 
+  // ✅ BUG FIX: Preset tap = REPLACE (not add)
   const handlePresetTap = async (item, presetQty) => {
-    const existing = dayEntries[item.id]?.[session];
-    const newQty   = existing ? existing.qty + presetQty : presetQty;
+    setTappingId(item.id + '-' + presetQty);
+    setTimeout(() => setTappingId(null), 400);
     try {
-      await upsertEntry(item.id, today, newQty, existing?.note || '', session);
-      showToast(`${item.emoji} ${item.name} — ${formatQty(newQty, item.unit)} ✓`);
+      await upsertEntry(item.id, today, presetQty, '', session);
+      showToast(`${item.emoji} ${formatQty(presetQty, item.unit)} set ✓`);
       await loadEntries();
       onEntryUpdate?.();
     } catch { showToast('Entry save नहीं हुई', 'error'); }
+  };
+
+  // +Add More: adds on top of existing qty
+  const handleAddMore = async () => {
+    if (!addMoreSheet) return;
+    const existing = dayEntries[addMoreSheet.id]?.[session];
+    const newQty = (existing?.qty || 0) + addMoreQty;
+    try {
+      await upsertEntry(addMoreSheet.id, today, newQty, existing?.note || '', session);
+      showToast(`${addMoreSheet.emoji} +${formatQty(addMoreQty, addMoreSheet.unit)} → ${formatQty(newQty, addMoreSheet.unit)} ✓`);
+      setAddMoreSheet(null);
+      await loadEntries();
+      onEntryUpdate?.();
+    } catch { showToast('Save नहीं हुआ', 'error'); }
   };
 
   const handleCustomSave = async () => {
@@ -54,7 +73,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
       const d = customEditMeta ? customEditMeta.date : today;
       const s = customEditMeta ? customEditMeta.session : session;
       await upsertEntry(customSheet.id, d, customQty, customNote, s);
-      showToast(`${customSheet.emoji} ${customSheet.name} — ${formatQty(customQty, customSheet.unit)} ✓`);
+      showToast(`${customSheet.emoji} ${formatQty(customQty, customSheet.unit)} ✓`);
       await loadEntries();
       onEntryUpdate?.();
       if (customEditMeta && historySheet) await loadHistory(historySheet, historyFromDate, historyToDate);
@@ -98,7 +117,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   };
 
   const handleDeleteHistory = async (id) => {
-    if (window.confirm("Delete this entry?")) {
+    if (window.confirm('क्या इस entry को delete करना है?')) {
       await deleteEntry(id);
       await loadEntries();
       onEntryUpdate?.();
@@ -108,116 +127,213 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
 
   const activeItems = items.filter(it => {
     if (!it.isActive) return false;
-    const itemSessions = getSessions(it);
-    return itemSessions.includes(session);
+    return getSessions(it).includes(session);
   });
 
   if (activeItems.length === 0) {
     return (
       <div className="empty-state">
         <span className="empty-emoji">📦</span>
-        <div className="empty-title">
-          {SESSION_CONFIG[session]?.icon} इस session में कोई item नहीं
-        </div>
-        <div className="empty-desc">Settings में item की sessions configure करें</div>
+        <div className="empty-title">{SESSION_CONFIG[session]?.icon} इस session में कोई item नहीं</div>
+        <div className="empty-desc">Settings → Items में session configure करें</div>
       </div>
     );
   }
 
+  const sessColor = SESSION_CONFIG[session]?.color || 'var(--clr-gold)';
+  const sessGrad  = SESSION_CONFIG[session]?.grad  || 'var(--grad-gold)';
+
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {activeItems.map(item => {
-          const presets  = getPresets(item);
-          const sessData = dayEntries[item.id]?.[session];
-          const totalToday = Object.values(dayEntries[item.id] || {}).reduce((s, e) => s + (e?.qty || 0), 0);
+          const presets    = getPresets(item);
+          const sessData   = dayEntries[item.id]?.[session];
+          const allSess    = dayEntries[item.id] || {};
+          const totalToday = Object.values(allSess).reduce((s, e) => s + (e?.qty || 0), 0);
           const hasSessEntry = sessData?.qty != null;
-          const isZero = hasSessEntry && sessData?.qty === 0;
+          const isZero       = hasSessEntry && sessData?.qty === 0;
+          const sessionsDone = getSessions(item).filter(s => dayEntries[item.id]?.[s]?.qty != null && dayEntries[item.id]?.[s]?.qty > 0).length;
+          const sessionsTotal = getSessions(item).length;
+          const progressPct   = sessionsTotal > 0 ? Math.round((sessionsDone / sessionsTotal) * 100) : 0;
 
           return (
-            <div key={item.id} className={`item-session-card ${hasSessEntry ? (isZero ? 'item-card-red' : 'item-card-green') : ''}`}>
+            <div
+              key={item.id}
+              className={`item-session-card ${hasSessEntry ? (isZero ? 'item-card-red' : 'item-card-green') : ''}`}
+              style={{ transition: 'all 0.2s var(--ease-spring)' }}
+            >
               {/* Item Header */}
               <div className="item-card-header">
                 <div className="flex items-center gap-3">
-                  <span style={{ fontSize: '1.8rem' }}>{item.emoji}</span>
-                  <div>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ fontSize: '2rem' }}>{item.emoji}</span>
+                    {/* Session progress dot */}
+                    {progressPct === 100 && (
+                      <span style={{
+                        position: 'absolute', top: -4, right: -4,
+                        width: 14, height: 14, borderRadius: '50%',
+                        background: 'var(--clr-green)',
+                        border: '2px solid var(--clr-bg-deep)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.5rem', color: '#fff', fontWeight: 700,
+                      }}>✓</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
                     <div className="font-bold">{item.name}</div>
-                    <div className="text-xs text-muted">
+                    <div className="text-xs text-muted" style={{ lineHeight: 1.5 }}>
                       {hasSessEntry
                         ? isZero
-                          ? '✗ नहीं मिला'
-                          : `${SESSION_CONFIG[session]?.icon} ${formatQty(sessData.qty, item.unit)}`
-                        : `${SESSION_CONFIG[session]?.icon} Entry बाकी`}
-                      {totalToday > 0 && ` • कुल आज: ${formatQty(totalToday, item.unit)}`}
+                          ? <span style={{ color: 'var(--clr-red)' }}>✗ नहीं मिला</span>
+                          : <span style={{ color: sessColor }}>
+                              {SESSION_CONFIG[session]?.icon} {formatQty(sessData.qty, item.unit)}
+                            </span>
+                        : <span>{SESSION_CONFIG[session]?.icon} Entry बाकी</span>}
+                      {totalToday > 0 && (
+                        <span style={{ color: 'rgba(241,245,249,0.5)', marginLeft: 6 }}>
+                          • आज कुल: <b style={{ color: 'var(--clr-gold)' }}>{formatQty(totalToday, item.unit)}</b>
+                        </span>
+                      )}
                     </div>
+                    {/* Session progress mini bar */}
+                    {sessionsTotal > 1 && (
+                      <div style={{ marginTop: 4, display: 'flex', gap: 3, alignItems: 'center' }}>
+                        {getSessions(item).map(s => {
+                          const sd = dayEntries[item.id]?.[s];
+                          const done = sd?.qty != null && sd.qty > 0;
+                          const zero = sd?.qty === 0;
+                          return (
+                            <div key={s} title={`${SESSION_CONFIG[s]?.label}: ${done ? formatQty(sd.qty, item.unit) : zero ? 'नहीं मिला' : 'बाकी'}`}
+                              style={{
+                                width: 20, height: 4, borderRadius: 4,
+                                background: done ? SESSION_CONFIG[s]?.color : zero ? 'var(--clr-red)' : 'rgba(255,255,255,0.15)',
+                                transition: 'background 0.3s',
+                              }}
+                            />
+                          );
+                        })}
+                        <span className="text-xs text-muted" style={{ fontSize: '0.62rem' }}>
+                          {sessionsDone}/{sessionsTotal}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    className="btn-icon-xs"
-                    onClick={() => openHistory(item)}
-                    title="History"
-                  >📋</button>
-                  <button
-                    className="btn-icon-xs btn-red"
-                    onClick={() => handleZero(item)}
-                    title="नहीं मिला"
-                  >✗</button>
+                  <button className="btn-icon-xs" onClick={() => openHistory(item)} title="History">📋</button>
+                  <button className="btn-icon-xs btn-red" onClick={() => handleZero(item)} title="नहीं मिला">✗</button>
                 </div>
               </div>
 
-              {/* Preset Buttons */}
-              {presets.length > 0 ? (
+              {/* Preset Buttons — REPLACE mode */}
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>
+                  tap = set करें &nbsp;•&nbsp; ✏️ = custom
+                </div>
                 <div className="preset-row">
-                  {presets.map((p) => (
+                  {(presets.length > 0 ? presets : [item.defaultQty || 1]).map((p) => {
+                    const isActive = hasSessEntry && sessData?.qty === p;
+                    const tapKey = item.id + '-' + p;
+                    return (
+                      <button
+                        key={p}
+                        className={`preset-btn ${isActive ? 'preset-btn-active' : ''}`}
+                        style={{
+                          transform: tappingId === tapKey ? 'scale(0.92)' : 'scale(1)',
+                          transition: 'transform 0.15s var(--ease-spring)',
+                          borderColor: isActive ? sessColor : undefined,
+                          color: isActive ? sessColor : undefined,
+                        }}
+                        onClick={() => handlePresetTap(item, p)}
+                      >
+                        {formatQty(p, item.unit)}
+                      </button>
+                    );
+                  })}
+
+                  {/* +More button — ADDITIVE mode */}
+                  {hasSessEntry && !isZero && (
                     <button
-                      key={p}
-                      className={`preset-btn ${hasSessEntry && sessData?.qty === p ? 'preset-btn-active' : ''}`}
-                      onClick={() => handlePresetTap(item, p)}
+                      className="preset-btn"
+                      style={{ color: 'var(--clr-teal)', borderColor: 'rgba(6,182,212,0.4)', fontSize: '0.8rem' }}
+                      onClick={() => {
+                        setAddMoreQty(presets[0] || item.defaultQty || 1);
+                        setAddMoreSheet(item);
+                      }}
+                      title="और जोड़ें"
                     >
-                      +{formatQty(p, item.unit)}
+                      ➕ और
                     </button>
-                  ))}
+                  )}
+
+                  {/* Custom button */}
                   <button
                     className="preset-btn preset-btn-custom"
                     onClick={() => {
                       setCustomQty(sessData?.qty || item.defaultQty || presets[0] || 0);
                       setCustomNote(sessData?.note || '');
+                      setCustomEditMeta(null);
                       setCustomSheet(item);
                     }}
                   >
-                    ✏️ Custom
+                    ✏️
                   </button>
                 </div>
-              ) : (
-                <div className="preset-row">
-                  <button
-                    className="preset-btn"
-                    onClick={() => handlePresetTap(item, item.defaultQty || 1)}
-                  >
-                    +{formatQty(item.defaultQty || 1, item.unit)}
-                  </button>
-                  <button
-                    className="preset-btn preset-btn-custom"
-                    onClick={() => {
-                      setCustomQty(sessData?.qty || item.defaultQty || 1);
-                      setCustomNote(sessData?.note || '');
-                      setCustomSheet(item);
-                    }}
-                  >
-                    ✏️ Custom
-                  </button>
-                </div>
-              )}
+              </div>
 
               {/* Note display */}
               {sessData?.note && (
-                <div className="item-note">📝 {sessData.note}</div>
+                <div className="item-note" style={{ marginTop: 6 }}>📝 {sessData.note}</div>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* +More Sheet */}
+      <Sheet
+        open={!!addMoreSheet}
+        onClose={() => setAddMoreSheet(null)}
+        title={`➕ ${addMoreSheet?.emoji} ${addMoreSheet?.name} — और जोड़ें`}
+      >
+        {addMoreSheet && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 40 }}>
+            <div className="text-sm text-muted text-center">
+              अभी: <b style={{ color: 'var(--clr-gold)' }}>
+                {formatQty(dayEntries[addMoreSheet.id]?.[session]?.qty || 0, addMoreSheet.unit)}
+              </b> • इसमें जोड़ें:
+            </div>
+            <div className="preset-row" style={{ justifyContent: 'center' }}>
+              {getPresets(addMoreSheet).map(p => (
+                <button key={p}
+                  className={`preset-btn ${addMoreQty === p ? 'preset-btn-active' : ''}`}
+                  onClick={() => setAddMoreQty(p)}>
+                  +{formatQty(p, addMoreSheet.unit)}
+                </button>
+              ))}
+            </div>
+            <div className="input-group">
+              <label className="input-label">Custom amount जोड़ें ({addMoreSheet.unit})</label>
+              <input
+                className="input"
+                type="number"
+                value={addMoreQty}
+                onChange={e => setAddMoreQty(+e.target.value)}
+                step={addMoreSheet.unit === 'ml' || addMoreSheet.unit === 'gram' ? 50 : 0.5}
+                min={0}
+                style={{ fontSize: '1.3rem', fontWeight: 700, textAlign: 'center' }}
+              />
+              <div className="text-center text-gold font-bold mt-1" style={{ fontSize: '0.85rem' }}>
+                नया Total = {formatQty((dayEntries[addMoreSheet.id]?.[session]?.qty || 0) + addMoreQty, addMoreSheet.unit)}
+              </div>
+            </div>
+            <button className="btn btn-primary btn-block" onClick={handleAddMore}>
+              ➕ {formatQty(addMoreQty, addMoreSheet.unit)} जोड़ें
+            </button>
+          </div>
+        )}
+      </Sheet>
 
       {/* Custom Qty Sheet */}
       <Sheet
@@ -228,10 +344,11 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
         {customSheet && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 40 }}>
             <div className="text-sm text-muted text-center">
-              {SESSION_CONFIG[session]?.icon} {SESSION_CONFIG[session]?.label} • {customSheet.unit}
+              {customEditMeta
+                ? `✏️ Edit: ${customEditMeta.date} • ${SESSION_CONFIG[customEditMeta.session]?.label}`
+                : `${SESSION_CONFIG[session]?.icon} ${SESSION_CONFIG[session]?.label} • ${customSheet.unit}`}
             </div>
 
-            {/* Numeric Input */}
             <div className="input-group">
               <label className="input-label">
                 मात्रा ({customSheet.unit})
@@ -247,7 +364,6 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                 min={0}
                 style={{ fontSize: '1.3rem', fontWeight: 700, textAlign: 'center' }}
               />
-              {/* Smart display */}
               {(customSheet.unit === 'ml' || customSheet.unit === 'gram') && customQty > 0 && (
                 <div className="text-center text-gold font-bold mt-1">
                   = {formatQty(customQty, customSheet.unit)}
@@ -255,7 +371,6 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
               )}
             </div>
 
-            {/* Quick amounts */}
             <div className="preset-row" style={{ justifyContent: 'center' }}>
               {getPresets(customSheet).map(p => (
                 <button key={p} className={`preset-btn ${customQty === p ? 'preset-btn-active' : ''}`}
@@ -265,7 +380,6 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
               ))}
             </div>
 
-            {/* Note */}
             <div className="input-group">
               <label className="input-label">📝 Note (optional)</label>
               <input
@@ -278,7 +392,8 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
             </div>
 
             <div className="flex gap-3">
-              <button className="btn btn-danger flex-1" onClick={() => handleZero(customSheet, true).then(() => { setCustomSheet(null); setCustomEditMeta(null); })}>
+              <button className="btn btn-danger flex-1"
+                onClick={() => handleZero(customSheet, true).then(() => { setCustomSheet(null); setCustomEditMeta(null); })}>
                 ✗ नहीं मिला
               </button>
               <button className="btn btn-primary flex-1" onClick={handleCustomSave}>
@@ -298,55 +413,77 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
         <div className="flex gap-2 mb-4">
           <div className="flex-1">
             <label className="text-xs text-muted block mb-1">From</label>
-            <input type="date" className="input" style={{padding: '4px', fontSize: '0.8rem'}} value={historyFromDate} onChange={e => {
-              setHistoryFromDate(e.target.value);
-              loadHistory(historySheet, e.target.value, historyToDate);
-            }} />
+            <input type="date" className="input" style={{ padding: '4px', fontSize: '0.8rem' }}
+              value={historyFromDate}
+              onChange={e => { setHistoryFromDate(e.target.value); loadHistory(historySheet, e.target.value, historyToDate); }} />
           </div>
           <div className="flex-1">
             <label className="text-xs text-muted block mb-1">To</label>
-            <input type="date" className="input" style={{padding: '4px', fontSize: '0.8rem'}} value={historyToDate} onChange={e => {
-              setHistoryToDate(e.target.value);
-              loadHistory(historySheet, historyFromDate, e.target.value);
-            }} />
+            <input type="date" className="input" style={{ padding: '4px', fontSize: '0.8rem' }}
+              value={historyToDate}
+              onChange={e => { setHistoryToDate(e.target.value); loadHistory(historySheet, historyFromDate, e.target.value); }} />
           </div>
         </div>
 
-        {history.map((day, i) => (
+        {/* History Summary */}
+        {history.length > 0 && (
+          <div style={{
+            background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.2)',
+            borderRadius: 10, padding: '8px 14px', marginBottom: 12,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span className="text-xs text-muted">{history.length} दिन का रिकॉर्ड</span>
+            <span className="font-bold text-gold">
+              कुल: {formatQty(history.reduce((s, d) => s + d.total, 0), historySheet?.unit)}
+            </span>
+          </div>
+        )}
+
+        {history.map((day) => (
           <div key={day.date} className="list-item" style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
             <div className="flex justify-between items-center mb-2">
               <div className="font-semi text-sm">
-                {day.date === today ? 'आज' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric', month: 'short' })} ({day.date})
+                {day.date === today ? 'आज' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginLeft: 6 }}>({day.date})</span>
               </div>
               <div className="font-bold text-gold">
                 {day.total > 0 ? formatQty(day.total, historySheet?.unit) : '—'}
               </div>
             </div>
-            
+
             <div className="flex flex-col gap-2 mt-1">
               {day.sessions.map(s => (
-                <div key={s.id || s.session} className="flex justify-between items-center" style={{ background: 'rgba(255,255,255,0.03)', padding: '6px', borderRadius: '8px' }}>
-                  <span className={`badge ${s.qty === 0 ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.68rem' }}>
-                    {SESSION_CONFIG[s.session]?.icon} {formatQty(s.qty, historySheet?.unit)}
-                    {s.note && ` · ${s.note}`}
+                <div key={s.id || s.session}
+                  className="flex justify-between items-center"
+                  style={{ background: 'rgba(255,255,255,0.03)', padding: '6px 10px', borderRadius: 8 }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.8rem' }}>{SESSION_CONFIG[s.session]?.icon}</span>
+                    <span className={`badge ${s.qty === 0 ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.68rem' }}>
+                      {formatQty(s.qty, historySheet?.unit)}
+                    </span>
+                    {s.note && <span className="text-xs text-muted">{s.note}</span>}
                   </span>
                   <div className="flex gap-1">
-                    <button className="btn-icon-xs" style={{ border: '1px solid rgba(255,255,255,0.1)' }} onClick={() => {
-                      setCustomQty(s.qty);
-                      setCustomNote(s.note || '');
-                      setCustomEditMeta({ date: day.date, session: s.session, id: s.id });
-                      setCustomSheet(historySheet);
-                    }}>✏️</button>
+                    <button className="btn-icon-xs" style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+                      onClick={() => {
+                        setCustomQty(s.qty);
+                        setCustomNote(s.note || '');
+                        setCustomEditMeta({ date: day.date, session: s.session, id: s.id });
+                        setCustomSheet(historySheet);
+                      }}>✏️</button>
                     <button className="btn-icon-xs btn-red" onClick={() => handleDeleteHistory(s.id)}>🗑️</button>
                   </div>
                 </div>
               ))}
-              {day.sessions.length === 0 && <span className="badge badge-orange" style={{ fontSize: '0.68rem', alignSelf: 'flex-start' }}>⚪ No entry</span>}
+              {day.sessions.length === 0 && (
+                <span className="badge badge-orange" style={{ fontSize: '0.68rem', alignSelf: 'flex-start' }}>⚪ No entry</span>
+              )}
             </div>
           </div>
         ))}
         {history.length === 0 && (
-           <div className="text-center text-muted mt-4">कोई एंट्री नहीं मिली</div>
+          <div className="text-center text-muted mt-4">कोई एंट्री नहीं मिली</div>
         )}
       </Sheet>
     </>

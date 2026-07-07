@@ -8,9 +8,9 @@ import { showToast, StreakBadge, Sheet, StatCard } from '../components/UI';
 import QuickGrid from '../components/QuickGrid';
 
 const SESSION_CONFIG = {
-  morning: { label: 'सुबह',  icon: '🌅', color: 'var(--clr-gold)' },
-  evening: { label: 'शाम',   icon: '🌆', color: 'var(--clr-violet-light)' },
-  night:   { label: 'रात',   icon: '🌙', color: 'var(--clr-teal)' },
+  morning: { label: 'सुबह',  icon: '🌅', color: 'var(--clr-gold)',         grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
+  evening: { label: 'शाम',   icon: '🌆', color: 'var(--clr-violet-light)', grad: 'linear-gradient(135deg,#7c3aed,#c084fc)' },
+  night:   { label: 'रात',   icon: '🌙', color: 'var(--clr-teal)',         grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
 };
 const ALL_SESSIONS = ['morning', 'evening', 'night'];
 
@@ -21,32 +21,33 @@ export default function Home() {
   const [vacation,      setVacation]      = useState(false);
   const [vacMsg,        setVacMsg]        = useState('');
   const [loadingAll,    setLoadingAll]    = useState(false);
-  const [runningTotal,  setRunningTotal]  = useState({});  // { itemId: { total, rate, amount } }
-  const [monthlyData,   setMonthlyData]   = useState([]); // { name, emoji, unit, morning, evening, total }
-  const [budgets,       setBudgets]       = useState([]);  // budget warnings
-  const [holidays,      setHolidays]      = useState([]); // today's holidays
+  const [runningTotal,  setRunningTotal]  = useState({});
+  const [monthlyData,   setMonthlyData]   = useState([]);
+  const [budgets,       setBudgets]       = useState([]);
+  const [holidays,      setHolidays]      = useState([]);
   const [bulkSession,   setBulkSession]   = useState('morning');
   const [bulkSheet,     setBulkSheet]     = useState(false);
   const [bulkItem,      setBulkItem]      = useState(null);
-  const [bulkRows,      setBulkRows]      = useState([]);  // [{ date, qty, note }]
+  const [bulkRows,      setBulkRows]      = useState([]);
   const [holidaySheet,  setHolidaySheet]  = useState(false);
   const [holidayForm,   setHolidayForm]   = useState({ date: todayStr(), name: '', autoZero: true });
-  const [todaySummary,  setTodaySummary]  = useState([]); // per-item today status
-  const [subsAlert,     setSubsAlert]     = useState([]); // subscriptions due today/soon
+  const [todaySummary,  setTodaySummary]  = useState([]);
+  const [subsAlert,     setSubsAlert]     = useState([]);
   const [activeDate,    setActiveDate]    = useState(todayStr());
-  // Auto-Fill / Copy Pattern state
   const [autoFillMode,    setAutoFillMode]    = useState(false);
   const [autoFillQty,     setAutoFillQty]     = useState('');
-  const [autoFillFrom,    setAutoFillFrom]    = useState(() => new Date().toISOString().slice(0, 7) + '-01'); // 1st of this month
+  const [autoFillFrom,    setAutoFillFrom]    = useState(() => new Date().toISOString().slice(0, 7) + '-01');
   const [autoFillTo,      setAutoFillTo]      = useState(todayStr());
   const [autoFillLoading, setAutoFillLoading] = useState(false);
+  // Daily session completion status per item
+  const [sessionStatus,   setSessionStatus]   = useState({}); // { itemId: { morning: done, evening: done, night: done } }
   const today = todayStr();
 
   const load = useCallback(async () => {
     const allItems = await db.items.toArray();
     setItems(allItems);
 
-    // Detect active session based on time
+    // Detect active session by time
     const h = new Date().getHours();
     if (h >= 5  && h < 11) setSession('morning');
     else if (h >= 11 && h < 18) setSession('evening');
@@ -62,15 +63,13 @@ export default function Home() {
     const vf  = await getSetting('vacationFrom');
     const vt  = await getSetting('vacationTo');
     setVacation(!!vac);
-    if (vac && vf && vt) {
-      setVacMsg(`बाहर गए हैं: ${vf} से ${vt} तक`);
-    }
+    if (vac && vf && vt) setVacMsg(`बाहर गए हैं: ${vf} से ${vt} तक`);
 
-    // Today's holiday check (for the selected activeDate)
+    // Today's holiday
     const todayHolidays = await db.holidays.where('date').equals(activeDate).toArray();
     setHolidays(todayHolidays);
 
-    // Running total (this month) for first active item
+    // Running total this month
     const activeItems = allItems.filter(it => it.isActive);
     const monthStr = today.slice(0, 7);
     const rtMap = {};
@@ -86,21 +85,23 @@ export default function Home() {
     }
     setRunningTotal(rtMap);
 
-    // Monthly Summary (Month-to-Date) for active month
+    // Monthly Summary
     const mData = [];
-    const activeMonthStr = activeDate.slice(0, 7); // e.g. "2026-07"
+    const activeMonthStr = activeDate.slice(0, 7);
     for (const item of activeItems) {
       const entries = await db.entries.where('itemId').equals(item.id)
         .filter(e => e.date.startsWith(activeMonthStr)).toArray();
-      let morning = 0, evening = 0, total = 0;
+      let morning = 0, evening = 0, night = 0, total = 0;
       entries.forEach(e => {
         const q = e.qty || 0;
         total += q;
         if (e.session === 'morning') morning += q;
         if (e.session === 'evening') evening += q;
+        if (e.session === 'night')   night   += q;
       });
       if (total > 0) {
-        mData.push({ morning, evening, total, unit: item.unit, name: item.name, emoji: item.emoji });
+        const daysEntried = new Set(entries.filter(e => e.qty > 0).map(e => e.date)).size;
+        mData.push({ morning, evening, night, total, unit: item.unit, name: item.name, emoji: item.emoji, daysEntried });
       }
     }
     setMonthlyData(mData);
@@ -112,13 +113,13 @@ export default function Home() {
       const it = allItems.find(i => i.id === bud.itemId);
       if (!it) continue;
       const entries = await db.entries.where('itemId').equals(bud.itemId).filter(e => e.date.startsWith(monthStr)).toArray();
-      const spent   = entries.reduce((s,e)=>s+(e.qty||0),0);
+      const spent   = entries.reduce((s,e) => s+(e.qty||0), 0);
       const pct     = bud.limitQty > 0 ? Math.round((spent / bud.limitQty) * 100) : 0;
       if (pct >= 80) warnings.push({ item: it, spent, limit: bud.limitQty, pct });
     }
     setBudgets(warnings);
 
-    // Today summary (per item)
+    // Today summary
     const summary = [];
     for (const item of activeItems) {
       const dayTotal = await getDayTotal(item.id, activeDate);
@@ -130,7 +131,16 @@ export default function Home() {
     }
     setTodaySummary(summary);
 
-    // Subscriptions due soon (fix isActive filter)
+    // Session status (for progress badges on session tabs)
+    const sStatus = {};
+    for (const item of activeItems) {
+      sStatus[item.id] = {};
+      const dayEntries = await getDayEntries(item.id, activeDate);
+      dayEntries.forEach(e => { sStatus[item.id][e.session] = e.qty; });
+    }
+    setSessionStatus(sStatus);
+
+    // Subscriptions due soon
     const allSubs = await db.subscriptions.filter(s => !!s.isActive).toArray();
     const todayD = new Date();
     const dueAlerts = allSubs.filter(s => {
@@ -142,15 +152,20 @@ export default function Home() {
 
   useEffect(() => { load(); }, [load, activeDate]);
 
-  // Open bulk past-entry sheet for an item
+  // Navigate date
+  const goDate = (delta) => {
+    const d = new Date(activeDate + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    const newDate = d.toISOString().split('T')[0];
+    if (newDate <= today) setActiveDate(newDate);
+  };
+
+  // Open bulk past-entry sheet
   const openBulkEntry = async (item) => {
     let activeBulkSession = session;
     const itemSessions = getSessions(item);
-    if (!itemSessions.includes(activeBulkSession)) {
-      activeBulkSession = itemSessions[0] || 'morning';
-    }
+    if (!itemSessions.includes(activeBulkSession)) activeBulkSession = itemSessions[0] || 'morning';
     setBulkSession(activeBulkSession);
-
     const rows = [];
     for (let i = 1; i <= 7; i++) {
       const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
@@ -180,22 +195,17 @@ export default function Home() {
     load();
   };
 
-  // Auto-Fill / Copy Pattern - apply same qty for a date range
   const handleAutoFill = async () => {
     if (!autoFillQty || !autoFillFrom || !autoFillTo || !bulkItem) {
-      showToast('Qty aur Date range bharo', 'error');
-      return;
+      showToast('Qty aur Date range bharo', 'error'); return;
     }
     if (autoFillFrom > autoFillTo) {
-      showToast('"Kab Se" date "Kab Tak" se pahle honi chahiye', 'error');
-      return;
+      showToast('"Kab Se" date "Kab Tak" se pahle honi chahiye', 'error'); return;
     }
     setAutoFillLoading(true);
     try {
-      // Get holidays in this range to skip them
       const holidays = await db.holidays.toArray();
       const holidayDates = new Set(holidays.filter(h => h.autoZero).map(h => h.date));
-
       const d = new Date(autoFillFrom + 'T00:00:00');
       const end = new Date(autoFillTo + 'T00:00:00');
       let count = 0;
@@ -245,32 +255,72 @@ export default function Home() {
     load();
   };
 
-  // Greeting
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'सुप्रभात 🌅' : hour < 17 ? 'नमस्ते ☀️' : 'शुभ संध्या 🌙';
-
   const totalMonthAmount = Object.values(runningTotal).reduce((s, r) => s + (r.amount || 0), 0);
+  const isToday = activeDate === today;
+
+  // Per-session completion count for tab badges
+  const getSessionBadge = (sess) => {
+    const activeItemsForSession = items.filter(it => it.isActive && getSessions(it).includes(sess));
+    if (activeItemsForSession.length === 0) return null;
+    const done = activeItemsForSession.filter(it => {
+      const qty = sessionStatus[it.id]?.[sess];
+      return qty != null && qty > 0;
+    }).length;
+    return { done, total: activeItemsForSession.length };
+  };
 
   return (
     <div className="page">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="page-title" style={{marginBottom:0}}>🏠 घर का हिसाब</div>
-          <div className="flex items-center gap-2 mt-1">
-            <input type="date" className="input text-xs" style={{padding:'4px 8px', width:'auto', background:'rgba(255,255,255,0.05)'}} 
-              value={activeDate} onChange={(e) => setActiveDate(e.target.value)} max={todayStr()} />
-            <span className="text-xs text-muted"> • 🔥 {streak}</span>
-          </div>
+          <div className="page-title" style={{ marginBottom: 2 }}>🏠 घर का हिसाब</div>
+          <div className="text-xs text-muted">{greeting}</div>
         </div>
         <StreakBadge streak={streak} />
+      </div>
+
+      {/* Date Navigator */}
+      <div className="flex items-center gap-2 mb-4" style={{
+        background: 'rgba(255,255,255,0.05)',
+        borderRadius: 12,
+        padding: '8px 12px',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}>
+        <button
+          onClick={() => goDate(-1)}
+          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: '1.1rem', cursor: 'pointer', padding: '0 4px' }}
+        >‹</button>
+        <input
+          type="date"
+          className="input"
+          style={{ padding: '4px 8px', width: 'auto', flex: 1, background: 'transparent', border: 'none', textAlign: 'center', fontWeight: 600 }}
+          value={activeDate}
+          onChange={(e) => setActiveDate(e.target.value)}
+          max={todayStr()}
+        />
+        <button
+          onClick={() => goDate(1)}
+          disabled={isToday}
+          style={{ background: 'none', border: 'none', color: isToday ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.5)', fontSize: '1.1rem', cursor: isToday ? 'default' : 'pointer', padding: '0 4px' }}
+        >›</button>
+        {!isToday && (
+          <button
+            onClick={() => setActiveDate(today)}
+            style={{ background: 'rgba(245,166,35,0.15)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 8, color: 'var(--clr-gold)', fontSize: '0.7rem', padding: '3px 8px', cursor: 'pointer' }}
+          >आज</button>
+        )}
+        <span className="text-xs text-muted">🔥 {streak}</span>
       </div>
 
       {/* Today's Holiday Banner */}
       {holidays.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           {holidays.map(h => (
-            <div key={h.id} className="holiday-badge" style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', borderRadius: 12, marginBottom: 8 }}>
+            <div key={h.id} className="holiday-badge"
+              style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', borderRadius: 12, marginBottom: 8 }}>
               🎉 आज {h.name} है — entries 0 mark की गई हैं
             </div>
           ))}
@@ -285,7 +335,7 @@ export default function Home() {
             <div style={{ fontWeight: 700, color: 'var(--clr-teal)' }}>छुट्टी मोड ON</div>
             <div className="text-xs text-muted">{vacMsg}</div>
             <button className="btn btn-outline btn-sm" style={{ marginTop: 8 }}
-              onClick={async () => { await navigator.clipboard.writeText(vacMsg).catch(()=>{}); showToast('Copy हो गया!', 'info'); }}>
+              onClick={async () => { await navigator.clipboard.writeText(vacMsg).catch(() => {}); showToast('Copy हो गया!', 'info'); }}>
               📋 Message Copy
             </button>
           </div>
@@ -305,13 +355,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* Running Total Banner */}
+      {/* Running Total Banner — Advanced */}
       {totalMonthAmount > 0 && (
-        <div className="running-total-banner">
-          <div>
-            <div className="running-total-label">📊 इस महीने का कुल खर्च</div>
-            <div style={{ fontSize: '0.72rem', color: 'rgba(241,245,249,0.4)' }}>
-              {Object.values(runningTotal).filter(r=>r.total>0).map(r=>`${r.emoji} ${formatQty(r.total, r.unit)}`).join('  •  ')}
+        <div className="running-total-banner" style={{ marginBottom: 16 }}>
+          <div style={{ flex: 1 }}>
+            <div className="running-total-label">📊 {activeDate.slice(0,7)} का खर्च</div>
+            <div style={{ fontSize: '0.72rem', color: 'rgba(241,245,249,0.4)', marginTop: 2 }}>
+              {Object.values(runningTotal).filter(r => r.total > 0).map(r => `${r.emoji} ${formatQty(r.total, r.unit)}`).join('  •  ')}
+            </div>
+            {/* Days info */}
+            <div style={{ fontSize: '0.65rem', color: 'rgba(241,245,249,0.3)', marginTop: 2 }}>
+              {new Date().getDate()} दिन में से {new Date(activeDate.slice(0,7)+'-01').toLocaleDateString('hi-IN',{month:'long'})}
             </div>
           </div>
           <div className="running-total-amount">{formatRupees(totalMonthAmount)}</div>
@@ -331,22 +385,34 @@ export default function Home() {
         </div>
       ))}
 
-      {/* Monthly Session Summary */}
+      {/* Monthly Session Summary — Advanced */}
       {Array.isArray(monthlyData) && monthlyData.length > 0 && (
         <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
           {monthlyData.map((data, idx) => (
             <div key={idx} style={{ borderBottom: idx !== monthlyData.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', paddingBottom: idx !== monthlyData.length - 1 ? '12px' : 0 }}>
-              <div className="text-xs text-muted mb-2 font-bold">📈 {data.emoji} {data.name} — इस महीने का हिसाब ({activeDate.slice(0,7)})</div>
+              <div className="text-xs text-muted mb-2 font-bold">
+                📈 {data.emoji} {data.name} — {activeDate.slice(0,7)} &nbsp;
+                <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.3)' }}>({data.daysEntried} दिन)</span>
+              </div>
               <div className="weekly-compare" style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', alignItems: 'center' }}>
                 <div style={{ flex: 1 }}>
                   <div className="weekly-col-label">{SESSION_CONFIG['morning'].icon} सुबह</div>
                   <div className="weekly-col-value text-gold">{formatQty(data.morning, data.unit)}</div>
                 </div>
-                <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
-                <div style={{ flex: 1 }}>
-                  <div className="weekly-col-label">{SESSION_CONFIG['evening'].icon} शाम</div>
-                  <div className="weekly-col-value text-violet">{formatQty(data.evening, data.unit)}</div>
-                </div>
+                {data.evening > 0 && <>
+                  <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="weekly-col-label">{SESSION_CONFIG['evening'].icon} शाम</div>
+                    <div className="weekly-col-value text-violet">{formatQty(data.evening, data.unit)}</div>
+                  </div>
+                </>}
+                {data.night > 0 && <>
+                  <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="weekly-col-label">{SESSION_CONFIG['night'].icon} रात</div>
+                    <div className="weekly-col-value text-teal">{formatQty(data.night, data.unit)}</div>
+                  </div>
+                </>}
                 <div className="weekly-vs" style={{ margin: '0 8px' }}>=</div>
                 <div style={{ flex: 1 }}>
                   <div className="weekly-col-label">कुल</div>
@@ -358,31 +424,47 @@ export default function Home() {
         </div>
       )}
 
-      {/* Session Tabs */}
+      {/* Session Tabs — with completion badges */}
       <div className="session-tabs">
-        {ALL_SESSIONS.map(s => (
-          <button
-            key={s}
-            className={`session-tab ${s} ${session === s ? 'active' : ''}`}
-            onClick={() => setSession(s)}
-          >
-            <span>{SESSION_CONFIG[s].icon}</span>
-            <span>{SESSION_CONFIG[s].label}</span>
-          </button>
-        ))}
+        {ALL_SESSIONS.map(s => {
+          const badge = getSessionBadge(s);
+          return (
+            <button
+              key={s}
+              className={`session-tab ${s} ${session === s ? 'active' : ''}`}
+              onClick={() => setSession(s)}
+              style={{ position: 'relative' }}
+            >
+              <span>{SESSION_CONFIG[s].icon}</span>
+              <span>{SESSION_CONFIG[s].label}</span>
+              {badge && badge.done > 0 && (
+                <span style={{
+                  position: 'absolute', top: 4, right: 4,
+                  width: 16, height: 16, borderRadius: '50%',
+                  background: badge.done === badge.total ? 'var(--clr-green)' : 'var(--clr-orange)',
+                  fontSize: '0.55rem', color: '#fff', fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: '1.5px solid var(--clr-bg-deep)',
+                }}>
+                  {badge.done}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* All Normal + Bulk + Holiday Buttons */}
+      {/* Action Buttons */}
       <div className="flex gap-2 mb-4">
         <button className="btn btn-primary flex-1" onClick={handleAllNormal} disabled={loadingAll} id="btn-all-normal">
           {loadingAll ? <span className="spinner" /> : SESSION_CONFIG[session].icon} सब नॉर्मल
         </button>
-        <button className="btn btn-outline btn-sm btn-icon" onClick={() => { setBulkItem(items.find(i=>i.isActive)); openBulkEntry(items.find(i=>i.isActive)); }} title="पिछले दिन भरें">
-          📅
-        </button>
-        <button className="btn btn-outline btn-sm btn-icon" onClick={() => setHolidaySheet(true)} title="छुट्टी mark करें">
-          🎉
-        </button>
+        <button
+          className="btn btn-outline btn-sm btn-icon"
+          onClick={() => { const first = items.find(i => i.isActive); if (first) openBulkEntry(first); }}
+          title="पिछले दिन भरें"
+        >📅</button>
+        <button className="btn btn-outline btn-sm btn-icon" onClick={() => setHolidaySheet(true)} title="छुट्टी mark करें">🎉</button>
       </div>
 
       {/* Quick Grid */}
@@ -390,8 +472,8 @@ export default function Home() {
 
       {/* Today's Full Summary */}
       {todaySummary.some(s => s.dayTotal > 0) && (
-        <div className="card mt-4">
-          <div className="section-title">✅ आज का पूरा हिसाब</div>
+        <div className="card mt-4" style={{ background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.15)' }}>
+          <div className="section-title">✅ {activeDate === today ? 'आज' : activeDate} का पूरा हिसाब</div>
           {todaySummary.filter(s => s.dayTotal > 0 || Object.keys(s.sessEntries).length > 0).map(({ item, dayTotal, sessions, sessEntries }) => (
             <div key={item.id} className="mb-3">
               <div className="flex justify-between items-center">
@@ -417,11 +499,12 @@ export default function Home() {
           <>
             {/* Item Selector */}
             <div className="flex gap-2 mb-4 scroll-x">
-              {items.filter(i=>i.isActive).map(it => (
-                <button key={it.id} style={{flexShrink:0}}
-                  className={`btn btn-sm ${bulkItem?.id===it.id?'btn-primary':'btn-outline'}`}
-                  onClick={() => openBulkEntry(it)}
-                >{it.emoji} {it.name}</button>
+              {items.filter(i => i.isActive).map(it => (
+                <button key={it.id} style={{ flexShrink: 0 }}
+                  className={`btn btn-sm ${bulkItem?.id === it.id ? 'btn-primary' : 'btn-outline'}`}
+                  onClick={() => openBulkEntry(it)}>
+                  {it.emoji} {it.name}
+                </button>
               ))}
             </div>
 
@@ -430,7 +513,11 @@ export default function Home() {
               {getSessions(bulkItem).map(s => (
                 <button key={s}
                   className={`btn btn-sm ${bulkSession === s ? 'btn-outline' : ''}`}
-                  style={{ border: bulkSession === s ? `1px solid ${SESSION_CONFIG[s].color}` : 'none', color: bulkSession === s ? SESSION_CONFIG[s].color : 'rgba(255,255,255,0.4)', background: 'transparent' }}
+                  style={{
+                    border: bulkSession === s ? `1px solid ${SESSION_CONFIG[s].color}` : 'none',
+                    color: bulkSession === s ? SESSION_CONFIG[s].color : 'rgba(255,255,255,0.4)',
+                    background: 'transparent',
+                  }}
                   onClick={async () => {
                     const activeBulkSession = s;
                     setBulkSession(activeBulkSession);
@@ -452,13 +539,12 @@ export default function Home() {
 
             {/* Auto-Fill Toggle */}
             <div
-              className={`card mb-3`}
+              className="card mb-3"
               style={{
                 padding: '10px 14px',
                 background: autoFillMode ? 'rgba(245,166,35,0.08)' : 'rgba(255,255,255,0.04)',
                 border: autoFillMode ? '1px solid rgba(245,166,35,0.4)' : '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 12,
-                cursor: 'pointer',
+                borderRadius: 12, cursor: 'pointer',
               }}
               onClick={() => setAutoFillMode(m => !m)}
             >
@@ -479,32 +565,25 @@ export default function Home() {
                 <div className="grid-2 gap-3 mb-3">
                   <div className="input-group">
                     <label className="input-label">Qty ({bulkItem.unit}) *</label>
-                    <input
-                      className="input"
-                      type="number"
-                      value={autoFillQty}
+                    <input className="input" type="number" value={autoFillQty}
                       onChange={e => setAutoFillQty(e.target.value)}
                       placeholder={`जैसे: ${(bulkItem.presets ? JSON.parse(bulkItem.presets)[0] : bulkItem.defaultQty) || 500}`}
-                      step={bulkItem.unit === 'ml' || bulkItem.unit === 'gram' ? 50 : 0.5}
-                    />
+                      step={bulkItem.unit === 'ml' || bulkItem.unit === 'gram' ? 50 : 0.5} />
                   </div>
                   <div className="input-group">
                     <label className="input-label">Quick Presets</label>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {(bulkItem.presets ? JSON.parse(bulkItem.presets) : []).map(p => (
-                        <button
-                          key={p}
+                        <button key={p}
                           className={`btn btn-sm ${+autoFillQty === p ? 'btn-primary' : 'btn-outline'}`}
                           style={{ padding: '3px 10px', fontSize: '0.75rem' }}
-                          onClick={() => setAutoFillQty(p.toString())}
-                        >
-                          {bulkItem.unit === 'ml' && p >= 1000 ? `${p/1000}L` : `${p}`}
+                          onClick={() => setAutoFillQty(p.toString())}>
+                          {bulkItem.unit === 'ml' && p >= 1000 ? `${p / 1000}L` : `${p}`}
                         </button>
                       ))}
                     </div>
                   </div>
                 </div>
-
                 <div className="grid-2 gap-3 mb-3">
                   <div className="input-group">
                     <label className="input-label">📅 कब से (From)</label>
@@ -515,16 +594,12 @@ export default function Home() {
                     <input className="input" type="date" value={autoFillTo} onChange={e => setAutoFillTo(e.target.value)} />
                   </div>
                 </div>
-
-                <div className="text-xs text-muted mb-3" style={{ lineHeight: 1.5 }}>
-                  ℹ️ Holiday mark किए दिन skip होंगे। बाकी सब दिन <b>{autoFillQty || '—'} {bulkItem.unit}</b> से fill होंगे।
-                </div>
-
-                <button
-                  className="btn btn-primary btn-block"
-                  onClick={handleAutoFill}
-                  disabled={autoFillLoading}
-                >
+                {autoFillQty && autoFillFrom && autoFillTo && (
+                  <div style={{ background: 'rgba(245,166,35,0.08)', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: '0.8rem' }}>
+                    ℹ️ {formatQty(+autoFillQty, bulkItem.unit)} × हर दिन ({autoFillFrom} से {autoFillTo})
+                  </div>
+                )}
+                <button className="btn btn-primary btn-block" onClick={handleAutoFill} disabled={autoFillLoading}>
                   {autoFillLoading ? <span className="spinner" /> : '⚡ Auto-Fill करें'}
                 </button>
               </div>
@@ -535,39 +610,24 @@ export default function Home() {
               <>
                 {bulkRows.map((row, i) => (
                   <div key={i} className="bulk-entry-row flex items-center gap-2 mb-2">
-                    <input
-                      className="input"
-                      style={{ width: '130px', padding: '6px 8px', fontSize: '0.8rem' }}
-                      type="date"
-                      value={row.date}
+                    <input className="input" style={{ width: '130px', padding: '6px 8px', fontSize: '0.8rem' }}
+                      type="date" value={row.date}
                       onChange={async e => {
-                        const r = [...bulkRows];
-                        r[i].date = e.target.value;
+                        const r = [...bulkRows]; r[i].date = e.target.value;
                         if (e.target.value && bulkItem) {
                           const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(en => en.date === e.target.value && en.session === bulkSession).toArray();
                           const entry = entryList[0];
-                          r[i].id = entry?.id;
-                          r[i].qty = entry?.qty != null ? entry.qty : '';
-                          r[i].note = entry?.note || '';
+                          r[i].id = entry?.id; r[i].qty = entry?.qty != null ? entry.qty : ''; r[i].note = entry?.note || '';
                         }
                         setBulkRows(r);
-                      }}
-                    />
-                    <input
-                      className="bulk-qty-input"
-                      type="number"
-                      placeholder={`${bulkItem.unit}`}
-                      value={row.qty}
-                      onChange={e => { const r=[...bulkRows]; r[i].qty=e.target.value; setBulkRows(r); }}
-                      step={bulkItem.unit==='ml'||bulkItem.unit==='gram'?50:0.5}
-                    />
-                    <input
-                      className="input flex-1"
-                      style={{fontSize:'0.8rem',padding:'6px 10px'}}
-                      placeholder="Note..."
-                      value={row.note}
-                      onChange={e => { const r=[...bulkRows]; r[i].note=e.target.value; setBulkRows(r); }}
-                    />
+                      }} />
+                    <input className="bulk-qty-input" type="number"
+                      placeholder={`${bulkItem.unit}`} value={row.qty}
+                      onChange={e => { const r = [...bulkRows]; r[i].qty = e.target.value; setBulkRows(r); }}
+                      step={bulkItem.unit === 'ml' || bulkItem.unit === 'gram' ? 50 : 0.5} />
+                    <input className="input flex-1" style={{ fontSize: '0.8rem', padding: '6px 10px' }}
+                      placeholder="Note..." value={row.note}
+                      onChange={e => { const r = [...bulkRows]; r[i].note = e.target.value; setBulkRows(r); }} />
                   </div>
                 ))}
                 <button className="btn btn-primary btn-block mt-3" onClick={saveBulkEntries}>
@@ -579,18 +639,17 @@ export default function Home() {
         )}
       </Sheet>
 
-
       {/* Holiday Marking Sheet */}
       <Sheet open={holidaySheet} onClose={() => setHolidaySheet(false)} title="🎉 Holiday Mark करें">
         <div className="input-group">
           <label className="input-label">तारीख</label>
           <input className="input" type="date" value={holidayForm.date}
-            onChange={e => setHolidayForm(f=>({...f, date:e.target.value}))} />
+            onChange={e => setHolidayForm(f => ({ ...f, date: e.target.value }))} />
         </div>
         <div className="input-group">
           <label className="input-label">त्योहार / छुट्टी का नाम</label>
           <input className="input" placeholder="जैसे: Diwali, Sunday छुट्टी..." value={holidayForm.name}
-            onChange={e => setHolidayForm(f=>({...f, name:e.target.value}))} />
+            onChange={e => setHolidayForm(f => ({ ...f, name: e.target.value }))} />
         </div>
         <div className="toggle-wrap">
           <div>
@@ -599,7 +658,7 @@ export default function Home() {
           </div>
           <label className="toggle">
             <input type="checkbox" checked={holidayForm.autoZero}
-              onChange={e => setHolidayForm(f=>({...f, autoZero:e.target.checked}))} />
+              onChange={e => setHolidayForm(f => ({ ...f, autoZero: e.target.checked }))} />
             <span className="toggle-slider" />
           </label>
         </div>
