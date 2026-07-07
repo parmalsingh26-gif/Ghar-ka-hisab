@@ -282,37 +282,79 @@ export default function Home() {
         <StreakBadge streak={streak} />
       </div>
 
-      {/* Date Navigator */}
+      {/* Date Navigator — Mobile Friendly */}
       <div className="flex items-center gap-2 mb-4" style={{
         background: 'rgba(255,255,255,0.05)',
-        borderRadius: 12,
-        padding: '8px 12px',
+        borderRadius: 14,
+        padding: '6px 10px',
         border: '1px solid rgba(255,255,255,0.08)',
       }}>
+        {/* Prev Day */}
         <button
           onClick={() => goDate(-1)}
-          style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: '1.1rem', cursor: 'pointer', padding: '0 4px' }}
+          style={{
+            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
+            color: '#f1f5f9', fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
         >‹</button>
-        <input
-          type="date"
-          className="input"
-          style={{ padding: '4px 8px', width: 'auto', flex: 1, background: 'transparent', border: 'none', textAlign: 'center', fontWeight: 600 }}
-          value={activeDate}
-          onChange={(e) => setActiveDate(e.target.value)}
-          max={todayStr()}
-        />
+
+        {/* Tappable Date Chip — opens native date picker on tap */}
+        <div style={{ flex: 1, position: 'relative', textAlign: 'center' }}>
+          <button
+            onClick={() => document.getElementById('home-date-picker').showPicker?.() || document.getElementById('home-date-picker').focus()}
+            style={{
+              width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+              padding: '4px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+            }}
+          >
+            <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', fontWeight: 500 }}>
+              {isToday ? '📅 आज' : new Date(activeDate + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short' })}
+            </span>
+            <span style={{ fontSize: '1rem', fontWeight: 700, color: isToday ? 'var(--clr-gold)' : '#f1f5f9', letterSpacing: 0.5 }}>
+              {new Date(activeDate + 'T00:00:00').toLocaleDateString('hi-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </span>
+          </button>
+          {/* Hidden native date input */}
+          <input
+            id="home-date-picker"
+            type="date"
+            value={activeDate}
+            max={todayStr()}
+            onChange={(e) => { if (e.target.value) setActiveDate(e.target.value); }}
+            style={{
+              position: 'absolute', opacity: 0, top: 0, left: 0,
+              width: '100%', height: '100%', cursor: 'pointer',
+              border: 'none', background: 'none',
+            }}
+          />
+        </div>
+
+        {/* Next Day */}
         <button
           onClick={() => goDate(1)}
           disabled={isToday}
-          style={{ background: 'none', border: 'none', color: isToday ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.5)', fontSize: '1.1rem', cursor: isToday ? 'default' : 'pointer', padding: '0 4px' }}
+          style={{
+            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+            background: isToday ? 'transparent' : 'rgba(255,255,255,0.07)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: isToday ? 'rgba(255,255,255,0.2)' : '#f1f5f9',
+            fontSize: '1rem', cursor: isToday ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
         >›</button>
+
+        {/* Aaj button — only when not today */}
         {!isToday && (
           <button
             onClick={() => setActiveDate(today)}
-            style={{ background: 'rgba(245,166,35,0.15)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 8, color: 'var(--clr-gold)', fontSize: '0.7rem', padding: '3px 8px', cursor: 'pointer' }}
+            style={{
+              background: 'rgba(245,166,35,0.15)', border: '1px solid rgba(245,166,35,0.3)',
+              borderRadius: 8, color: 'var(--clr-gold)', fontSize: '0.68rem',
+              padding: '4px 8px', cursor: 'pointer', flexShrink: 0, fontWeight: 600,
+            }}
           >आज</button>
         )}
-        <span className="text-xs text-muted">🔥 {streak}</span>
       </div>
 
       {/* Today's Holiday Banner */}
