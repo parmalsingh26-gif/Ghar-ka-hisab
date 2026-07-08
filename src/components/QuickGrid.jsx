@@ -3,18 +3,112 @@ import { showToast, Sheet } from './UI';
 import db, { upsertEntry, deleteEntry, getDayEntries, getPresets, getSessions, formatQty, todayStr } from '../db/db';
 
 const SESSION_CONFIG = {
-  morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)',   grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
+  morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)',         grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
   evening: { label: 'शाम',  icon: '🌆', color: 'var(--clr-violet-light)', grad: 'linear-gradient(135deg,#7c3aed,#c084fc)' },
-  night:   { label: 'रात',  icon: '🌙', color: 'var(--clr-teal)',   grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
+  night:   { label: 'रात',  icon: '🌙', color: 'var(--clr-teal)',         grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
 };
 
-// =====================================================
-// QUICK TAP GRID — Sessions + Custom Presets
-// BUG FIX: Preset tap now REPLACES qty (not adds)
-// Use +Add button to accumulate more
-// =====================================================
+// ===== 7-Day Sparkline Component =====
+function Sparkline({ itemId, unit, color = '#f5a623', today }) {
+  const [bars, setBars] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const data = [];
+      for (let i = 6; i >= 0; i--) {
+        const todayParts = today.split('-').map(Number);
+        const d = new Date(todayParts[0], todayParts[1]-1, todayParts[2]);
+        d.setDate(d.getDate() - i);
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const entries = await db.entries.where({ itemId }).filter(e => e.date === dateStr).toArray();
+        const total = entries.reduce((s, e) => s + (e.qty || 0), 0);
+        data.push({ date: dateStr, total, isToday: dateStr === today });
+      }
+      setBars(data);
+    };
+    if (itemId) load();
+  }, [itemId, today]);
+
+  if (bars.length === 0) return null;
+  const maxVal = Math.max(...bars.map(b => b.total), 1);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 30, marginTop: 6 }}>
+      {bars.map((b, i) => {
+        const heightPct = b.total > 0 ? Math.max(15, (b.total / maxVal) * 100) : 4;
+        const dayLabel = ['र','स','म','ब','ग','श','श'][new Date(b.date + 'T00:00:00').getDay()];
+        return (
+          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, height: '100%', justifyContent: 'flex-end' }}>
+            <div
+              title={`${b.date}: ${formatQty(b.total, unit)}`}
+              style={{
+                width: '100%',
+                height: `${heightPct}%`,
+                minHeight: b.total > 0 ? 4 : 2,
+                borderRadius: '3px 3px 0 0',
+                background: b.isToday
+                  ? `linear-gradient(180deg, ${color}, ${color}88)`
+                  : b.total > 0
+                    ? `${color}55`
+                    : 'rgba(255,255,255,0.08)',
+                boxShadow: b.isToday ? `0 0 6px ${color}60` : 'none',
+                transition: 'height 0.4s ease',
+              }}
+            />
+            <div style={{
+              fontSize: '0.52rem',
+              color: b.isToday ? color : 'rgba(255,255,255,0.25)',
+              fontWeight: b.isToday ? 800 : 400,
+              lineHeight: 1,
+            }}>{dayLabel}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ===== Weekly Average Badge =====
+function WeeklyAvg({ itemId, unit }) {
+  const [avg, setAvg] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const today = todayStr();
+      let total = 0, count = 0;
+      for (let i = 0; i < 7; i++) {
+        const tp = today.split('-').map(Number);
+        const d = new Date(tp[0], tp[1]-1, tp[2]);
+        d.setDate(d.getDate() - i);
+        const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const entries = await db.entries.where({ itemId }).filter(e => e.date === ds).toArray();
+        const dayTotal = entries.reduce((s, e) => s + (e.qty || 0), 0);
+        if (dayTotal > 0) { total += dayTotal; count++; }
+      }
+      setAvg(count > 0 ? Math.round(total / count) : 0);
+    };
+    if (itemId) load();
+  }, [itemId]);
+
+  if (!avg) return null;
+  return (
+    <span style={{
+      fontSize: '0.6rem',
+      background: 'rgba(6,182,212,0.12)',
+      border: '1px solid rgba(6,182,212,0.25)',
+      color: 'var(--clr-teal)',
+      borderRadius: 6,
+      padding: '2px 6px',
+      fontWeight: 700,
+    }}>
+      avg: {formatQty(avg, '')}
+    </span>
+  );
+}
+
+// ===== Main QuickGrid Component =====
 export default function QuickGrid({ items, session, activeDate, onEntryUpdate }) {
-  const [dayEntries,    setDayEntries]    = useState({}); // { itemId: { session: {qty,note} } }
+  const [dayEntries,    setDayEntries]    = useState({});
   const [customSheet,   setCustomSheet]   = useState(null);
   const [customQty,     setCustomQty]     = useState(0);
   const [customNote,    setCustomNote]    = useState('');
@@ -23,12 +117,12 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   const [historyFromDate, setHistoryFromDate] = useState('');
   const [historyToDate,   setHistoryToDate]   = useState('');
   const [customEditMeta,  setCustomEditMeta]  = useState(null);
-  const [tappingId,       setTappingId]       = useState(null); // item id for visual feedback
-  const [addMoreSheet,    setAddMoreSheet]    = useState(null); // for +More mode
+  const [tappingId,       setTappingId]       = useState(null);
+  const [addMoreSheet,    setAddMoreSheet]    = useState(null);
   const [addMoreQty,      setAddMoreQty]      = useState(0);
+  const [expandedItem,    setExpandedItem]    = useState(null);
   const today = activeDate || todayStr();
 
-  // Load today's entries for all items
   const loadEntries = useCallback(async () => {
     const map = {};
     for (const item of items) {
@@ -41,19 +135,17 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
 
   useEffect(() => { if (items.length) loadEntries(); }, [loadEntries]);
 
-  // ✅ BUG FIX: Preset tap = REPLACE (not add)
   const handlePresetTap = async (item, presetQty) => {
     setTappingId(item.id + '-' + presetQty);
-    setTimeout(() => setTappingId(null), 400);
+    setTimeout(() => setTappingId(null), 350);
     try {
       await upsertEntry(item.id, today, presetQty, '', session);
-      showToast(`${item.emoji} ${formatQty(presetQty, item.unit)} set ✓`);
+      showToast(`${item.emoji} ${formatQty(presetQty, item.unit)} ✓`);
       await loadEntries();
       onEntryUpdate?.();
     } catch { showToast('Entry save नहीं हुई', 'error'); }
   };
 
-  // +Add More: adds on top of existing qty
   const handleAddMore = async () => {
     if (!addMoreSheet) return;
     const existing = dayEntries[addMoreSheet.id]?.[session];
@@ -141,47 +233,52 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
   }
 
   const sessColor = SESSION_CONFIG[session]?.color || 'var(--clr-gold)';
-  const sessGrad  = SESSION_CONFIG[session]?.grad  || 'var(--grad-gold)';
+
+  // Session color hex for sparklines
+  const sessColorHex = session === 'morning' ? '#f5a623' : session === 'evening' ? '#c084fc' : '#06b6d4';
 
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {activeItems.map(item => {
-          const presets    = getPresets(item);
-          const sessData   = dayEntries[item.id]?.[session];
-          const allSess    = dayEntries[item.id] || {};
-          const totalToday = Object.values(allSess).reduce((s, e) => s + (e?.qty || 0), 0);
+          const presets     = getPresets(item);
+          const sessData    = dayEntries[item.id]?.[session];
+          const allSess     = dayEntries[item.id] || {};
+          const totalToday  = Object.values(allSess).reduce((s, e) => s + (e?.qty || 0), 0);
           const hasSessEntry = sessData?.qty != null;
           const isZero       = hasSessEntry && sessData?.qty === 0;
-          const sessionsDone = getSessions(item).filter(s => dayEntries[item.id]?.[s]?.qty != null && dayEntries[item.id]?.[s]?.qty > 0).length;
+          const sessionsDone  = getSessions(item).filter(s => dayEntries[item.id]?.[s]?.qty != null && dayEntries[item.id]?.[s]?.qty > 0).length;
           const sessionsTotal = getSessions(item).length;
           const progressPct   = sessionsTotal > 0 ? Math.round((sessionsDone / sessionsTotal) * 100) : 0;
+          const isExpanded    = expandedItem === item.id;
 
           return (
             <div
               key={item.id}
               className={`item-session-card ${hasSessEntry ? (isZero ? 'item-card-red' : 'item-card-green') : ''}`}
-              style={{ transition: 'all 0.2s var(--ease-spring)' }}
             >
               {/* Item Header */}
               <div className="item-card-header">
-                <div className="flex items-center gap-3">
-                  <div style={{ position: 'relative' }}>
+                <div className="flex items-center gap-3" style={{ flex: 1 }}>
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
                     <span style={{ fontSize: '2rem' }}>{item.emoji}</span>
-                    {/* Session progress dot */}
                     {progressPct === 100 && (
                       <span style={{
                         position: 'absolute', top: -4, right: -4,
-                        width: 14, height: 14, borderRadius: '50%',
+                        width: 16, height: 16, borderRadius: '50%',
                         background: 'var(--clr-green)',
                         border: '2px solid var(--clr-bg-deep)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: '0.5rem', color: '#fff', fontWeight: 700,
+                        boxShadow: '0 0 6px rgba(34,197,94,0.5)',
                       }}>✓</span>
                     )}
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div className="font-bold">{item.name}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="font-bold" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {item.name}
+                      <WeeklyAvg itemId={item.id} unit={item.unit} />
+                    </div>
                     <div className="text-xs text-muted" style={{ lineHeight: 1.5 }}>
                       {hasSessEntry
                         ? isZero
@@ -191,23 +288,24 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                             </span>
                         : <span>{SESSION_CONFIG[session]?.icon} Entry बाकी</span>}
                       {totalToday > 0 && (
-                        <span style={{ color: 'rgba(241,245,249,0.5)', marginLeft: 6 }}>
-                          • आज कुल: <b style={{ color: 'var(--clr-gold)' }}>{formatQty(totalToday, item.unit)}</b>
+                        <span style={{ color: 'rgba(241,245,249,0.45)', marginLeft: 6 }}>
+                          • कुल: <b style={{ color: 'var(--clr-gold)' }}>{formatQty(totalToday, item.unit)}</b>
                         </span>
                       )}
                     </div>
                     {/* Session progress mini bar */}
                     {sessionsTotal > 1 && (
-                      <div style={{ marginTop: 4, display: 'flex', gap: 3, alignItems: 'center' }}>
+                      <div style={{ marginTop: 5, display: 'flex', gap: 3, alignItems: 'center' }}>
                         {getSessions(item).map(s => {
                           const sd = dayEntries[item.id]?.[s];
                           const done = sd?.qty != null && sd.qty > 0;
                           const zero = sd?.qty === 0;
                           return (
-                            <div key={s} title={`${SESSION_CONFIG[s]?.label}: ${done ? formatQty(sd.qty, item.unit) : zero ? 'नहीं मिला' : 'बाकी'}`}
+                            <div key={s}
+                              title={`${SESSION_CONFIG[s]?.label}: ${done ? formatQty(sd.qty, item.unit) : zero ? 'नहीं मिला' : 'बाकी'}`}
                               style={{
-                                width: 20, height: 4, borderRadius: 4,
-                                background: done ? SESSION_CONFIG[s]?.color : zero ? 'var(--clr-red)' : 'rgba(255,255,255,0.15)',
+                                width: 22, height: 5, borderRadius: 4,
+                                background: done ? SESSION_CONFIG[s]?.color : zero ? 'var(--clr-red)' : 'rgba(255,255,255,0.12)',
                                 transition: 'background 0.3s',
                               }}
                             />
@@ -220,16 +318,35 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2">
+
+                {/* Action buttons */}
+                <div className="flex gap-1" style={{ flexShrink: 0, marginLeft: 8 }}>
+                  <button className="btn-icon-xs" onClick={() => setExpandedItem(isExpanded ? null : item.id)} title="Sparkline">
+                    📊
+                  </button>
                   <button className="btn-icon-xs" onClick={() => openHistory(item)} title="History">📋</button>
                   <button className="btn-icon-xs btn-red" onClick={() => handleZero(item)} title="नहीं मिला">✗</button>
                 </div>
               </div>
 
-              {/* Preset Buttons — REPLACE mode */}
+              {/* 7-Day Sparkline (expandable) */}
+              {isExpanded && (
+                <div style={{
+                  marginBottom: 8,
+                  background: 'rgba(255,255,255,0.03)',
+                  borderRadius: 10,
+                  padding: '8px 10px',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}>
+                  <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.3)', marginBottom: 4 }}>पिछले 7 दिन</div>
+                  <Sparkline itemId={item.id} unit={item.unit} color={sessColorHex} today={today} />
+                </div>
+              )}
+
+              {/* Preset Buttons */}
               <div style={{ marginTop: 8 }}>
-                <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>
-                  tap = set करें &nbsp;•&nbsp; ✏️ = custom
+                <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.3)', marginBottom: 5 }}>
+                  tap = set करें &nbsp;•&nbsp; ➕ = जोड़ें &nbsp;•&nbsp; ✏️ = custom
                 </div>
                 <div className="preset-row">
                   {(presets.length > 0 ? presets : [item.defaultQty || 1]).map((p) => {
@@ -240,10 +357,11 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                         key={p}
                         className={`preset-btn ${isActive ? 'preset-btn-active' : ''}`}
                         style={{
-                          transform: tappingId === tapKey ? 'scale(0.92)' : 'scale(1)',
+                          transform: tappingId === tapKey ? 'scale(0.88)' : 'scale(1)',
                           transition: 'transform 0.15s var(--ease-spring)',
                           borderColor: isActive ? sessColor : undefined,
                           color: isActive ? sessColor : undefined,
+                          boxShadow: isActive ? `0 0 10px ${sessColor}40` : undefined,
                         }}
                         onClick={() => handlePresetTap(item, p)}
                       >
@@ -252,11 +370,11 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                     );
                   })}
 
-                  {/* +More button — ADDITIVE mode */}
+                  {/* +More button */}
                   {hasSessEntry && !isZero && (
                     <button
                       className="preset-btn"
-                      style={{ color: 'var(--clr-teal)', borderColor: 'rgba(6,182,212,0.4)', fontSize: '0.8rem' }}
+                      style={{ color: 'var(--clr-teal)', borderColor: 'rgba(6,182,212,0.35)', fontSize: '0.82rem' }}
                       onClick={() => {
                         setAddMoreQty(presets[0] || item.defaultQty || 1);
                         setAddMoreSheet(item);
@@ -284,7 +402,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
 
               {/* Note display */}
               {sessData?.note && (
-                <div className="item-note" style={{ marginTop: 6 }}>📝 {sessData.note}</div>
+                <div className="item-note" style={{ marginTop: 8 }}>📝 {sessData.note}</div>
               )}
             </div>
           );
@@ -352,8 +470,8 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
             <div className="input-group">
               <label className="input-label">
                 मात्रा ({customSheet.unit})
-                {customSheet.unit === 'ml' && <span className="text-xs text-muted"> — जैसे: 250, 500, 1000ml = 1L</span>}
-                {customSheet.unit === 'gram' && <span className="text-xs text-muted"> — जैसे: 250, 500, 1000g = 1kg</span>}
+                {customSheet.unit === 'ml'    && <span className="text-xs text-muted"> — जैसे: 250, 500, 1000ml = 1L</span>}
+                {customSheet.unit === 'gram'  && <span className="text-xs text-muted"> — जैसे: 250, 500, 1000g = 1kg</span>}
               </label>
               <input
                 className="input"
@@ -363,6 +481,7 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
                 step={customSheet.unit === 'ml' || customSheet.unit === 'gram' ? 50 : 0.5}
                 min={0}
                 style={{ fontSize: '1.3rem', fontWeight: 700, textAlign: 'center' }}
+                autoFocus
               />
               {(customSheet.unit === 'ml' || customSheet.unit === 'gram') && customQty > 0 && (
                 <div className="text-center text-gold font-bold mt-1">
@@ -413,13 +532,13 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
         <div className="flex gap-2 mb-4">
           <div className="flex-1">
             <label className="text-xs text-muted block mb-1">From</label>
-            <input type="date" className="input" style={{ padding: '4px', fontSize: '0.8rem' }}
+            <input type="date" className="input" style={{ padding: '6px', fontSize: '0.8rem' }}
               value={historyFromDate}
               onChange={e => { setHistoryFromDate(e.target.value); loadHistory(historySheet, e.target.value, historyToDate); }} />
           </div>
           <div className="flex-1">
             <label className="text-xs text-muted block mb-1">To</label>
-            <input type="date" className="input" style={{ padding: '4px', fontSize: '0.8rem' }}
+            <input type="date" className="input" style={{ padding: '6px', fontSize: '0.8rem' }}
               value={historyToDate}
               onChange={e => { setHistoryToDate(e.target.value); loadHistory(historySheet, historyFromDate, e.target.value); }} />
           </div>
@@ -428,8 +547,8 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
         {/* History Summary */}
         {history.length > 0 && (
           <div style={{
-            background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.2)',
-            borderRadius: 10, padding: '8px 14px', marginBottom: 12,
+            background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.18)',
+            borderRadius: 12, padding: '10px 14px', marginBottom: 14,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
             <span className="text-xs text-muted">{history.length} दिन का रिकॉर्ड</span>
@@ -443,8 +562,8 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
           <div key={day.date} className="list-item" style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
             <div className="flex justify-between items-center mb-2">
               <div className="font-semi text-sm">
-                {day.date === today ? 'आज' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-                <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginLeft: 6 }}>({day.date})</span>
+                {day.date === today ? '📅 आज' : new Date(day.date + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                <span style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.25)', marginLeft: 6 }}>({day.date})</span>
               </div>
               <div className="font-bold text-gold">
                 {day.total > 0 ? formatQty(day.total, historySheet?.unit) : '—'}
@@ -455,10 +574,10 @@ export default function QuickGrid({ items, session, activeDate, onEntryUpdate })
               {day.sessions.map(s => (
                 <div key={s.id || s.session}
                   className="flex justify-between items-center"
-                  style={{ background: 'rgba(255,255,255,0.03)', padding: '6px 10px', borderRadius: 8 }}
+                  style={{ background: 'rgba(255,255,255,0.03)', padding: '7px 12px', borderRadius: 10 }}
                 >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: '0.8rem' }}>{SESSION_CONFIG[s.session]?.icon}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: '0.9rem' }}>{SESSION_CONFIG[s.session]?.icon}</span>
                     <span className={`badge ${s.qty === 0 ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.68rem' }}>
                       {formatQty(s.qty, historySheet?.unit)}
                     </span>

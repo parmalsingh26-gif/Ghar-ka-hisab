@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import db, {
   todayStr, upsertEntry, getSetting, setSetting,
   getDayEntries, getDayTotal, formatQty, getSessions
@@ -8,39 +8,81 @@ import { showToast, StreakBadge, Sheet, StatCard } from '../components/UI';
 import QuickGrid from '../components/QuickGrid';
 
 const SESSION_CONFIG = {
-  morning: { label: 'सुबह',  icon: '🌅', color: 'var(--clr-gold)',         grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
-  evening: { label: 'शाम',   icon: '🌆', color: 'var(--clr-violet-light)', grad: 'linear-gradient(135deg,#7c3aed,#c084fc)' },
-  night:   { label: 'रात',   icon: '🌙', color: 'var(--clr-teal)',         grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
+  morning: { label: 'सुबह', icon: '🌅', color: 'var(--clr-gold)',         grad: 'linear-gradient(135deg,#f5a623,#ffd166)' },
+  evening: { label: 'शाम',  icon: '🌆', color: 'var(--clr-violet-light)', grad: 'linear-gradient(135deg,#7c3aed,#c084fc)' },
+  night:   { label: 'रात',  icon: '🌙', color: 'var(--clr-teal)',         grad: 'linear-gradient(135deg,#0891b2,#06b6d4)' },
 };
 const ALL_SESSIONS = ['morning', 'evening', 'night'];
 
+// ===================== CONFETTI =====================
+function spawnConfetti() {
+  const colors = ['#f5a623','#ffd166','#a855f7','#06b6d4','#22c55e','#ec4899','#ef4444'];
+  for (let i = 0; i < 40; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.cssText = `
+      left: ${Math.random() * 100}vw;
+      background: ${colors[Math.floor(Math.random() * colors.length)]};
+      width: ${6 + Math.random() * 8}px;
+      height: ${10 + Math.random() * 10}px;
+      animation-duration: ${1.5 + Math.random() * 2}s;
+      animation-delay: ${Math.random() * 0.5}s;
+      border-radius: ${Math.random() > 0.5 ? '50%' : '2px'};
+      opacity: 1;
+    `;
+    document.body.appendChild(piece);
+    setTimeout(() => piece.remove(), 4000);
+  }
+}
+
+// ===================== SMART TIPS =====================
+const TIPS = [
+  { id: 't1', icon: '💡', text: 'Preset tap करने से entry SET होती है, ➕ से ADD होती है' },
+  { id: 't2', icon: '📅', text: '← → arrows से किसी भी दिन की entry edit करें' },
+  { id: 't3', icon: '📋', text: 'History देखने के लिए 📋 icon tap करें' },
+  { id: 't4', icon: '⚡', text: 'Auto-Fill से एक बार में पूरे month की entry करें' },
+  { id: 't5', icon: '🎯', text: '"सब नॉर्मल" से सभी items की default entry एक साथ भरें' },
+];
+
 export default function Home() {
-  const [items,         setItems]         = useState([]);
-  const [session,       setSession]       = useState('morning');
-  const [streak,        setStreak]        = useState(0);
-  const [vacation,      setVacation]      = useState(false);
-  const [vacMsg,        setVacMsg]        = useState('');
-  const [loadingAll,    setLoadingAll]    = useState(false);
-  const [runningTotal,  setRunningTotal]  = useState({});
-  const [monthlyData,   setMonthlyData]   = useState([]);
-  const [budgets,       setBudgets]       = useState([]);
-  const [holidays,      setHolidays]      = useState([]);
-  const [bulkSession,   setBulkSession]   = useState('morning');
-  const [bulkSheet,     setBulkSheet]     = useState(false);
-  const [bulkItem,      setBulkItem]      = useState(null);
-  const [bulkRows,      setBulkRows]      = useState([]);
-  const [holidaySheet,  setHolidaySheet]  = useState(false);
-  const [holidayForm,   setHolidayForm]   = useState({ date: todayStr(), name: '', autoZero: true });
-  const [todaySummary,  setTodaySummary]  = useState([]);
-  const [subsAlert,     setSubsAlert]     = useState([]);
-  const [activeDate,    setActiveDate]    = useState(todayStr());
-  const [autoFillMode,    setAutoFillMode]    = useState(false);
-  const [autoFillQty,     setAutoFillQty]     = useState('');
-  const [autoFillFrom,    setAutoFillFrom]    = useState(() => new Date().toISOString().slice(0, 7) + '-01');
-  const [autoFillTo,      setAutoFillTo]      = useState(todayStr());
-  const [autoFillLoading, setAutoFillLoading] = useState(false);
-  // Daily session completion status per item
-  const [sessionStatus,   setSessionStatus]   = useState({}); // { itemId: { morning: done, evening: done, night: done } }
+  const [items,          setItems]          = useState([]);
+  const [session,        setSession]        = useState('morning');
+  const [streak,         setStreak]         = useState(0);
+  const [vacation,       setVacation]       = useState(false);
+  const [vacMsg,         setVacMsg]         = useState('');
+  const [loadingAll,     setLoadingAll]     = useState(false);
+  const [runningTotal,   setRunningTotal]   = useState({});
+  const [monthlyData,    setMonthlyData]    = useState([]);
+  const [prevMonthData,  setPrevMonthData]  = useState([]);
+  const [budgets,        setBudgets]        = useState([]);
+  const [holidays,       setHolidays]       = useState([]);
+  const [bulkSession,    setBulkSession]    = useState('morning');
+  const [bulkSheet,      setBulkSheet]      = useState(false);
+  const [bulkItem,       setBulkItem]       = useState(null);
+  const [bulkRows,       setBulkRows]       = useState([]);
+  const [holidaySheet,   setHolidaySheet]   = useState(false);
+  const [holidayForm,    setHolidayForm]    = useState({ date: todayStr(), name: '', autoZero: true });
+  const [todaySummary,   setTodaySummary]   = useState([]);
+  const [subsAlert,      setSubsAlert]      = useState([]);
+  const [activeDate,     setActiveDate]     = useState(todayStr());
+  const [autoFillMode,   setAutoFillMode]   = useState(false);
+  const [autoFillQty,    setAutoFillQty]    = useState('');
+  const [autoFillFrom,   setAutoFillFrom]   = useState(() => new Date().toISOString().slice(0, 7) + '-01');
+  const [autoFillTo,     setAutoFillTo]     = useState(todayStr());
+  const [autoFillLoading,setAutoFillLoading]= useState(false);
+  const [sessionStatus,  setSessionStatus]  = useState({});
+  const [missingDays,    setMissingDays]    = useState(0);
+  const [costPerDay,     setCostPerDay]     = useState(0);
+  const [dismissedTips,  setDismissedTips]  = useState(() => {
+    try { return JSON.parse(localStorage.getItem('dismissedTips') || '[]'); } catch { return []; }
+  });
+  const [showTips,       setShowTips]       = useState(false);
+  const [prevStreakRef,  setPrevStreakRef]   = useState(0);
+  const [copyLoading,    setCopyLoading]    = useState(false);
+  const [quickZeroLoading, setQuickZeroLoading] = useState(false);
+  const [refreshing,     setRefreshing]     = useState(false);
+  // Pull-to-refresh
+  const touchStartY = useRef(null);
   const today = todayStr();
 
   const load = useCallback(async () => {
@@ -49,14 +91,22 @@ export default function Home() {
 
     // Detect active session by time
     const h = new Date().getHours();
-    if (h >= 5  && h < 11) setSession('morning');
+    if      (h >= 5  && h < 11) setSession('morning');
     else if (h >= 11 && h < 18) setSession('evening');
-    else setSession('night');
+    else                          setSession('night');
 
     // Streak
     const allEntries = await db.entries.filter(e => e.qty > 0).toArray();
     const uniqueDates = [...new Set(allEntries.map(e => e.date))].map(d => ({ date: d, qty: 1 }));
-    setStreak(calcStreak(uniqueDates));
+    const newStreak = calcStreak(uniqueDates);
+    // Milestone confetti
+    const milestones = [7, 14, 21, 30, 60, 100, 365];
+    if (newStreak > 0 && milestones.includes(newStreak) && newStreak !== prevStreakRef) {
+      setTimeout(spawnConfetti, 300);
+      showToast(`🎉 ${newStreak} दिन का Streak! शानदार!`);
+    }
+    setPrevStreakRef(newStreak);
+    setStreak(newStreak);
 
     // Vacation
     const vac = await getSetting('vacationMode');
@@ -65,13 +115,15 @@ export default function Home() {
     setVacation(!!vac);
     if (vac && vf && vt) setVacMsg(`बाहर गए हैं: ${vf} से ${vt} तक`);
 
-    // Today's holiday
+    // Holidays on active date
     const todayHolidays = await db.holidays.where('date').equals(activeDate).toArray();
     setHolidays(todayHolidays);
 
-    // Running total this month
     const activeItems = allItems.filter(it => it.isActive);
     const monthStr = today.slice(0, 7);
+    const activeMonthStr = activeDate.slice(0, 7);
+
+    // Running total
     const rtMap = {};
     for (const item of activeItems) {
       const entries = await db.entries
@@ -85,16 +137,19 @@ export default function Home() {
     }
     setRunningTotal(rtMap);
 
-    // Monthly Summary
+    // Cost per day
+    const totalAmt = Object.values(rtMap).reduce((s, r) => s + (r.amount || 0), 0);
+    const dayOfMonth = parseInt(today.split('-')[2]);
+    setCostPerDay(dayOfMonth > 0 ? Math.round(totalAmt / dayOfMonth) : 0);
+
+    // Monthly Summary (current month)
     const mData = [];
-    const activeMonthStr = activeDate.slice(0, 7);
     for (const item of activeItems) {
       const entries = await db.entries.where('itemId').equals(item.id)
         .filter(e => e.date.startsWith(activeMonthStr)).toArray();
       let morning = 0, evening = 0, night = 0, total = 0;
       entries.forEach(e => {
-        const q = e.qty || 0;
-        total += q;
+        const q = e.qty || 0; total += q;
         if (e.session === 'morning') morning += q;
         if (e.session === 'evening') evening += q;
         if (e.session === 'night')   night   += q;
@@ -105,6 +160,32 @@ export default function Home() {
       }
     }
     setMonthlyData(mData);
+
+    // Previous month comparison
+    const prevMonthDate = new Date(activeDate + 'T00:00:00');
+    prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
+    const prevMonthStr = prevMonthDate.toISOString().slice(0, 7);
+    const pmData = [];
+    for (const item of activeItems) {
+      const entries = await db.entries.where('itemId').equals(item.id)
+        .filter(e => e.date.startsWith(prevMonthStr)).toArray();
+      const total = entries.reduce((s, e) => s + (e.qty || 0), 0);
+      if (total > 0) pmData.push({ name: item.name, emoji: item.emoji, total, unit: item.unit });
+    }
+    setPrevMonthData(pmData);
+
+    // Missing days in current month (days passed but no entry)
+    const daysInMonth = getDaysInMonth(parseInt(activeMonthStr.slice(0,4)), parseInt(activeMonthStr.slice(5,7)) - 1);
+    const todayInMonth = today.startsWith(activeMonthStr) ? parseInt(today.split('-')[2]) : daysInMonth.length;
+    const entryDates = new Set();
+    for (const item of activeItems) {
+      const entries = await db.entries.where('itemId').equals(item.id)
+        .filter(e => e.date.startsWith(activeMonthStr) && e.qty > 0).toArray();
+      entries.forEach(e => entryDates.add(e.date));
+    }
+    const passedDays = daysInMonth.filter(d => d <= today);
+    const missingCount = passedDays.filter(d => !entryDates.has(d)).length;
+    setMissingDays(Math.max(0, missingCount));
 
     // Budget warnings
     const allBudgets = await db.budgets.filter(b => b.month === monthStr).toArray();
@@ -122,16 +203,16 @@ export default function Home() {
     // Today summary
     const summary = [];
     for (const item of activeItems) {
-      const dayTotal = await getDayTotal(item.id, activeDate);
-      const sessions = getSessions(item);
-      const dayEntries = await getDayEntries(item.id, activeDate);
+      const dayTotal    = await getDayTotal(item.id, activeDate);
+      const sessions    = getSessions(item);
+      const dayEntries  = await getDayEntries(item.id, activeDate);
       const sessEntries = {};
       dayEntries.forEach(e => { sessEntries[e.session] = e.qty; });
       summary.push({ item, dayTotal, sessions, sessEntries });
     }
     setTodaySummary(summary);
 
-    // Session status (for progress badges on session tabs)
+    // Session status
     const sStatus = {};
     for (const item of activeItems) {
       sStatus[item.id] = {};
@@ -142,25 +223,88 @@ export default function Home() {
 
     // Subscriptions due soon
     const allSubs = await db.subscriptions.filter(s => !!s.isActive).toArray();
-    const todayD = new Date();
+    const todayD  = new Date();
     const dueAlerts = allSubs.filter(s => {
       const daysUntil = s.billingDay - todayD.getDate();
       return daysUntil >= 0 && daysUntil <= 3;
     });
     setSubsAlert(dueAlerts);
-  }, [activeDate]);
+  }, [activeDate, prevStreakRef]);
 
   useEffect(() => { load(); }, [load, activeDate]);
 
-  // Navigate date
+  // ===== BUG FIX: Date navigation =====
   const goDate = (delta) => {
-    const d = new Date(activeDate + 'T00:00:00');
+    const parts = activeDate.split('-').map(Number);
+    const d = new Date(parts[0], parts[1] - 1, parts[2]);
     d.setDate(d.getDate() + delta);
-    const newDate = d.toISOString().split('T')[0];
-    if (newDate <= today) setActiveDate(newDate);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const newDate = `${y}-${m}-${day}`;
+    // Allow going backward freely, forward only up to today
+    if (delta > 0 && newDate > today) return;
+    setActiveDate(newDate);
   };
 
-  // Open bulk past-entry sheet
+  const isToday = activeDate === today;
+
+  // ===== Copy Yesterday =====
+  const copyYesterday = async () => {
+    setCopyLoading(true);
+    try {
+      const parts = activeDate.split('-').map(Number);
+      const d = new Date(parts[0], parts[1] - 1, parts[2]);
+      d.setDate(d.getDate() - 1);
+      const yStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const activeItems = items.filter(it => it.isActive);
+      let count = 0;
+      for (const item of activeItems) {
+        const yEntries = await getDayEntries(item.id, yStr);
+        for (const e of yEntries) {
+          if (e.qty != null) {
+            await upsertEntry(item.id, activeDate, e.qty, e.note || '', e.session);
+            count++;
+          }
+        }
+      }
+      showToast(`📋 ${count} entries copy हो गईं!`);
+      load();
+    } catch { showToast('Copy नहीं हुआ', 'error'); }
+    finally { setCopyLoading(false); }
+  };
+
+  // ===== Quick Zero All =====
+  const quickZeroAll = async () => {
+    setQuickZeroLoading(true);
+    try {
+      const activeItems = items.filter(it => it.isActive && getSessions(it).includes(session));
+      for (const item of activeItems) {
+        await upsertEntry(item.id, activeDate, 0, 'नहीं मिला', session);
+      }
+      showToast(`✗ ${SESSION_CONFIG[session].icon} सब — नहीं मिला`);
+      load();
+    } catch { showToast('कुछ गलत हुआ', 'error'); }
+    finally { setQuickZeroLoading(false); }
+  };
+
+  // ===== All Normal =====
+  const handleAllNormal = async () => {
+    setLoadingAll(true);
+    try {
+      const activeItems = items.filter(it => it.isActive && getSessions(it).includes(session));
+      for (const item of activeItems) {
+        const presets = item.presets ? JSON.parse(item.presets) : [];
+        const qty = presets[0] || item.defaultQty || 1;
+        await upsertEntry(item.id, activeDate, qty, 'सब नॉर्मल', session);
+      }
+      await load();
+      showToast(`✅ ${SESSION_CONFIG[session].icon} ${SESSION_CONFIG[session].label} — सब नॉर्मल!`);
+    } catch { showToast('कुछ entries save नहीं हुईं', 'error'); }
+    finally { setLoadingAll(false); }
+  };
+
+  // ===== Bulk Past Entry =====
   const openBulkEntry = async (item) => {
     let activeBulkSession = session;
     const itemSessions = getSessions(item);
@@ -168,8 +312,10 @@ export default function Home() {
     setBulkSession(activeBulkSession);
     const rows = [];
     for (let i = 1; i <= 7; i++) {
-      const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const parts = activeDate.split('-').map(Number);
+      const d = new Date(parts[0], parts[1]-1, parts[2]);
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const entryList = await db.entries.where('itemId').equals(item.id).filter(e => e.date === dateStr && e.session === activeBulkSession).toArray();
       const entry = entryList[0];
       rows.push({ id: entry?.id, date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
@@ -206,11 +352,13 @@ export default function Home() {
     try {
       const holidays = await db.holidays.toArray();
       const holidayDates = new Set(holidays.filter(h => h.autoZero).map(h => h.date));
-      const d = new Date(autoFillFrom + 'T00:00:00');
-      const end = new Date(autoFillTo + 'T00:00:00');
+      const startParts = autoFillFrom.split('-').map(Number);
+      const d = new Date(startParts[0], startParts[1]-1, startParts[2]);
+      const endParts = autoFillTo.split('-').map(Number);
+      const end = new Date(endParts[0], endParts[1]-1, endParts[2]);
       let count = 0;
       while (d <= end) {
-        const ds = d.toISOString().split('T')[0];
+        const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         if (!holidayDates.has(ds)) {
           await upsertEntry(bulkItem.id, ds, +autoFillQty, 'Auto-Fill', bulkSession);
           count++;
@@ -223,21 +371,6 @@ export default function Home() {
       load();
     } catch { showToast('Auto-Fill mein error aayi', 'error'); }
     finally { setAutoFillLoading(false); }
-  };
-
-  const handleAllNormal = async () => {
-    setLoadingAll(true);
-    try {
-      const activeItems = items.filter(it => it.isActive && getSessions(it).includes(session));
-      for (const item of activeItems) {
-        const presets = item.presets ? JSON.parse(item.presets) : [];
-        const qty = presets[0] || item.defaultQty || 1;
-        await upsertEntry(item.id, today, qty, 'सब नॉर्मल', session);
-      }
-      await load();
-      showToast(`✅ ${SESSION_CONFIG[session].icon} ${SESSION_CONFIG[session].label} — सब नॉर्मल!`);
-    } catch { showToast('कुछ entries save नहीं हुईं', 'error'); }
-    finally { setLoadingAll(false); }
   };
 
   const addHoliday = async () => {
@@ -255,12 +388,33 @@ export default function Home() {
     load();
   };
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'सुप्रभात 🌅' : hour < 17 ? 'नमस्ते ☀️' : 'शुभ संध्या 🌙';
-  const totalMonthAmount = Object.values(runningTotal).reduce((s, r) => s + (r.amount || 0), 0);
-  const isToday = activeDate === today;
+  // Pull to refresh handlers
+  const handleTouchStart = (e) => {
+    if (window.scrollY === 0) touchStartY.current = e.touches[0].clientY;
+  };
+  const handleTouchEnd = async (e) => {
+    if (touchStartY.current !== null) {
+      const delta = e.changedTouches[0].clientY - touchStartY.current;
+      if (delta > 60) {
+        setRefreshing(true);
+        await load();
+        setRefreshing(false);
+        showToast('✓ Refresh हो गया', 'info');
+      }
+      touchStartY.current = null;
+    }
+  };
 
-  // Per-session completion count for tab badges
+  const dismissTip = (id) => {
+    const updated = [...dismissedTips, id];
+    setDismissedTips(updated);
+    localStorage.setItem('dismissedTips', JSON.stringify(updated));
+  };
+
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? '🌙 शुभ रात्रि' : hour < 12 ? '🌅 सुप्रभात' : hour < 17 ? '☀️ नमस्ते' : hour < 20 ? '🌆 शुभ संध्या' : '🌙 शुभ रात्रि';
+  const totalMonthAmount = Object.values(runningTotal).reduce((s, r) => s + (r.amount || 0), 0);
+
   const getSessionBadge = (sess) => {
     const activeItemsForSession = items.filter(it => it.isActive && getSessions(it).includes(sess));
     if (activeItemsForSession.length === 0) return null;
@@ -271,98 +425,154 @@ export default function Home() {
     return { done, total: activeItemsForSession.length };
   };
 
+  const visibleTips = TIPS.filter(t => !dismissedTips.includes(t.id));
+
+  // Format active date for display
+  const activeDateObj = (() => {
+    const [y, m, d] = activeDate.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  })();
+
   return (
-    <div className="page">
+    <div
+      className="page"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Pull to Refresh Indicator */}
+      {refreshing && (
+        <div className="ptr-indicator">
+          <div className="ptr-spinner" />
+          <span>Refresh हो रहा है...</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="page-title" style={{ marginBottom: 2 }}>🏠 घर का हिसाब</div>
           <div className="text-xs text-muted">{greeting}</div>
         </div>
-        <StreakBadge streak={streak} />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowTips(t => !t)}
+            style={{
+              width: 34, height: 34, borderRadius: 12,
+              background: showTips ? 'rgba(245,166,35,0.2)' : 'rgba(255,255,255,0.07)',
+              border: `1px solid ${showTips ? 'rgba(245,166,35,0.4)' : 'rgba(255,255,255,0.12)'}`,
+              color: showTips ? 'var(--clr-gold)' : 'rgba(255,255,255,0.5)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem',
+            }}
+            title="Tips"
+          >💡</button>
+          <StreakBadge streak={streak} />
+        </div>
       </div>
 
-      {/* Date Navigator — Mobile Friendly */}
-      <div className="flex items-center gap-2 mb-4" style={{
-        background: 'rgba(255,255,255,0.05)',
-        borderRadius: 14,
-        padding: '6px 10px',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}>
-        {/* Prev Day */}
-        <button
-          onClick={() => goDate(-1)}
-          style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
-            color: '#f1f5f9', fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >‹</button>
+      {/* Smart Tips */}
+      {showTips && visibleTips.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          {visibleTips.slice(0, 2).map(tip => (
+            <div key={tip.id} className="tip-card">
+              <span style={{ fontSize: '1.3rem', flexShrink: 0 }}>{tip.icon}</span>
+              <div style={{ flex: 1, fontSize: '0.82rem', color: 'rgba(241,245,249,0.8)' }}>{tip.text}</div>
+              <button className="tip-dismiss" onClick={() => dismissTip(tip.id)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
 
-        {/* Tappable Date Chip — opens native date picker on tap */}
-        <div style={{ flex: 1, position: 'relative', textAlign: 'center' }}>
-          <button
+      {/* ===== PREMIUM DATE NAVIGATOR ===== */}
+      <div className="date-navigator" style={{ position: 'relative' }}>
+        {/* Prev Day */}
+        <button className="date-nav-btn" onClick={() => goDate(-1)}>‹</button>
+
+        {/* Date center — tappable to open date picker */}
+        <div className="date-nav-center" style={{ position: 'relative', cursor: 'pointer' }}>
+          <div className="date-nav-label">
+            {isToday ? '📅 आज' : activeDateObj.toLocaleDateString('hi-IN', { weekday: 'short' })}
+          </div>
+          <div
+            className="date-nav-date"
+            style={{ color: isToday ? 'var(--clr-gold)' : '#f1f5f9' }}
             onClick={() => document.getElementById('home-date-picker').showPicker?.() || document.getElementById('home-date-picker').focus()}
-            style={{
-              width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-              padding: '4px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
-            }}
           >
-            <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', fontWeight: 500 }}>
-              {isToday ? '📅 आज' : new Date(activeDate + 'T00:00:00').toLocaleDateString('hi-IN', { weekday: 'short' })}
-            </span>
-            <span style={{ fontSize: '1rem', fontWeight: 700, color: isToday ? 'var(--clr-gold)' : '#f1f5f9', letterSpacing: 0.5 }}>
-              {new Date(activeDate + 'T00:00:00').toLocaleDateString('hi-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </span>
-          </button>
+            {activeDateObj.toLocaleDateString('hi-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </div>
           {/* Hidden native date input */}
           <input
             id="home-date-picker"
             type="date"
             value={activeDate}
-            max={todayStr()}
+            max={today}
             onChange={(e) => { if (e.target.value) setActiveDate(e.target.value); }}
             style={{
               position: 'absolute', opacity: 0, top: 0, left: 0,
               width: '100%', height: '100%', cursor: 'pointer',
-              border: 'none', background: 'none',
+              border: 'none', background: 'none', pointerEvents: 'none',
             }}
           />
         </div>
 
         {/* Next Day */}
         <button
+          className="date-nav-btn"
           onClick={() => goDate(1)}
           disabled={isToday}
-          style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: isToday ? 'transparent' : 'rgba(255,255,255,0.07)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: isToday ? 'rgba(255,255,255,0.2)' : '#f1f5f9',
-            fontSize: '1rem', cursor: isToday ? 'default' : 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
+          style={{ opacity: isToday ? 0.25 : 1 }}
         >›</button>
 
-        {/* Aaj button — only when not today */}
+        {/* Aaj button */}
         {!isToday && (
-          <button
-            onClick={() => setActiveDate(today)}
-            style={{
-              background: 'rgba(245,166,35,0.15)', border: '1px solid rgba(245,166,35,0.3)',
-              borderRadius: 8, color: 'var(--clr-gold)', fontSize: '0.68rem',
-              padding: '4px 8px', cursor: 'pointer', flexShrink: 0, fontWeight: 600,
-            }}
-          >आज</button>
+          <button className="date-nav-today-btn" onClick={() => setActiveDate(today)}>आज</button>
         )}
       </div>
 
-      {/* Today's Holiday Banner */}
+      {/* ===== TODAY WIDGET ===== */}
+      {totalMonthAmount > 0 && (
+        <div className="today-widget">
+          <div className="today-widget-title">📊 {activeDate.slice(0,7)} का कुल खर्च</div>
+          <div className="today-widget-amount">{formatRupees(totalMonthAmount)}</div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+            {costPerDay > 0 && (
+              <div style={{ fontSize: '0.78rem', color: 'rgba(241,245,249,0.5)' }}>
+                📆 रोज़ avg: <span style={{ color: 'var(--clr-gold)', fontWeight: 700 }}>{formatRupees(costPerDay)}</span>
+              </div>
+            )}
+            {streak > 0 && (
+              <div style={{ fontSize: '0.78rem', color: 'rgba(241,245,249,0.5)' }}>
+                🔥 <span style={{ color: 'var(--clr-orange)', fontWeight: 700 }}>{streak} दिन</span> streak
+              </div>
+            )}
+          </div>
+          <div className="today-widget-items">
+            {Object.values(runningTotal).filter(r => r.total > 0).map((r, i) => (
+              <span key={i} className="today-widget-chip">
+                {r.emoji} {formatQty(r.total, r.unit)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===== MISSING DAYS ALERT ===== */}
+      {missingDays > 0 && today.startsWith(activeDate.slice(0,7)) && (
+        <div className="missing-alert">
+          <span className="missing-alert-icon">⚠️</span>
+          <div>
+            <div className="missing-alert-text">इस महीने कुछ दिन entry नहीं है</div>
+            <div style={{ fontSize: '0.72rem', color: 'rgba(249,115,22,0.7)', marginTop: 2 }}>Calendar में जाकर fill करें</div>
+          </div>
+          <div className="missing-alert-count">{missingDays} दिन</div>
+        </div>
+      )}
+
+      {/* Holiday Banner */}
       {holidays.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           {holidays.map(h => (
             <div key={h.id} className="holiday-badge"
-              style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', borderRadius: 12, marginBottom: 8 }}>
+              style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', borderRadius: 16, marginBottom: 8 }}>
               🎉 आज {h.name} है — entries 0 mark की गई हैं
             </div>
           ))}
@@ -397,76 +607,87 @@ export default function Home() {
         </div>
       )}
 
-      {/* Running Total Banner — Advanced */}
-      {totalMonthAmount > 0 && (
-        <div className="running-total-banner" style={{ marginBottom: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div className="running-total-label">📊 {activeDate.slice(0,7)} का खर्च</div>
-            <div style={{ fontSize: '0.72rem', color: 'rgba(241,245,249,0.4)', marginTop: 2 }}>
-              {Object.values(runningTotal).filter(r => r.total > 0).map(r => `${r.emoji} ${formatQty(r.total, r.unit)}`).join('  •  ')}
-            </div>
-            {/* Days info */}
-            <div style={{ fontSize: '0.65rem', color: 'rgba(241,245,249,0.3)', marginTop: 2 }}>
-              {new Date().getDate()} दिन में से {new Date(activeDate.slice(0,7)+'-01').toLocaleDateString('hi-IN',{month:'long'})}
-            </div>
-          </div>
-          <div className="running-total-amount">{formatRupees(totalMonthAmount)}</div>
-        </div>
-      )}
-
-      {/* Budget Warnings */}
+      {/* Budget Warnings with Ring */}
       {budgets.map(b => (
         <div key={b.item.id} className="card card-red mb-3" style={{ padding: 12 }}>
-          <div className="flex justify-between items-center">
-            <span className="text-sm font-bold">{b.item.emoji} {b.item.name} Budget {b.pct}% used!</span>
-            <span className="badge badge-red">{formatQty(b.spent, b.item.unit)} / {formatQty(b.limit, b.item.unit)}</span>
-          </div>
-          <div className="progress-bar" style={{ marginTop: 6 }}>
-            <div className="progress-fill red" style={{ width: `${Math.min(100, b.pct)}%` }} />
+          <div className="flex items-center gap-3">
+            {/* Circular ring */}
+            <div style={{ position: 'relative', width: 52, height: 52, flexShrink: 0 }}>
+              <svg width="52" height="52" className="budget-ring-svg">
+                <circle className="budget-ring-bg" cx="26" cy="26" r="22" strokeWidth="5" />
+                <circle className="budget-ring-fg"
+                  cx="26" cy="26" r="22" strokeWidth="5"
+                  stroke={b.pct >= 100 ? 'var(--clr-red)' : 'var(--clr-orange)'}
+                  strokeDasharray={`${2 * Math.PI * 22}`}
+                  strokeDashoffset={`${2 * Math.PI * 22 * (1 - Math.min(100, b.pct) / 100)}`}
+                />
+              </svg>
+              <div className="budget-ring-label">
+                <div style={{ fontSize: '0.6rem', fontWeight: 800, color: b.pct >= 100 ? 'var(--clr-red)' : 'var(--clr-orange)' }}>{b.pct}%</div>
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold">{b.item.emoji} {b.item.name}</span>
+                <span className="badge badge-red">{formatQty(b.spent, b.item.unit)} / {formatQty(b.limit, b.item.unit)}</span>
+              </div>
+              <div className="text-xs text-muted mt-1">Budget {b.pct >= 100 ? '🚨 खत्म!' : `${b.pct}% use हो गया`}</div>
+            </div>
           </div>
         </div>
       ))}
 
-      {/* Monthly Session Summary — Advanced */}
+      {/* Monthly Session Summary */}
       {Array.isArray(monthlyData) && monthlyData.length > 0 && (
-        <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '16px' }}>
-          {monthlyData.map((data, idx) => (
-            <div key={idx} style={{ borderBottom: idx !== monthlyData.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none', paddingBottom: idx !== monthlyData.length - 1 ? '12px' : 0 }}>
-              <div className="text-xs text-muted mb-2 font-bold">
-                📈 {data.emoji} {data.name} — {activeDate.slice(0,7)} &nbsp;
-                <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.3)' }}>({data.daysEntried} दिन)</span>
-              </div>
-              <div className="weekly-compare" style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', alignItems: 'center' }}>
-                <div style={{ flex: 1 }}>
-                  <div className="weekly-col-label">{SESSION_CONFIG['morning'].icon} सुबह</div>
-                  <div className="weekly-col-value text-gold">{formatQty(data.morning, data.unit)}</div>
-                </div>
-                {data.evening > 0 && <>
-                  <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
-                  <div style={{ flex: 1 }}>
-                    <div className="weekly-col-label">{SESSION_CONFIG['evening'].icon} शाम</div>
-                    <div className="weekly-col-value text-violet">{formatQty(data.evening, data.unit)}</div>
+        <div className="weekly-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '16px' }}>
+          {monthlyData.map((data, idx) => {
+            const prevData = prevMonthData.find(p => p.name === data.name);
+            const diff = prevData ? data.total - prevData.total : null;
+            return (
+              <div key={idx} style={{ borderBottom: idx !== monthlyData.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none', paddingBottom: idx !== monthlyData.length - 1 ? '12px' : 0 }}>
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-xs text-muted font-bold">
+                    📈 {data.emoji} {data.name} — {activeDate.slice(0,7)}&nbsp;
+                    <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.3)' }}>({data.daysEntried} दिन)</span>
                   </div>
-                </>}
-                {data.night > 0 && <>
-                  <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                  {diff !== null && (
+                    <span style={{ fontSize: '0.68rem', color: diff >= 0 ? 'var(--clr-green)' : 'var(--clr-red)', fontWeight: 700 }}>
+                      {diff >= 0 ? '↑' : '↓'} {formatQty(Math.abs(diff), data.unit)}
+                    </span>
+                  )}
+                </div>
+                <div className="weekly-compare" style={{ display: 'flex', justifyContent: 'space-between', textAlign: 'center', alignItems: 'center' }}>
                   <div style={{ flex: 1 }}>
-                    <div className="weekly-col-label">{SESSION_CONFIG['night'].icon} रात</div>
-                    <div className="weekly-col-value text-teal">{formatQty(data.night, data.unit)}</div>
+                    <div className="weekly-col-label">{SESSION_CONFIG['morning'].icon} सुबह</div>
+                    <div className="weekly-col-value text-gold">{formatQty(data.morning, data.unit)}</div>
                   </div>
-                </>}
-                <div className="weekly-vs" style={{ margin: '0 8px' }}>=</div>
-                <div style={{ flex: 1 }}>
-                  <div className="weekly-col-label">कुल</div>
-                  <div className="weekly-col-value text-green">{formatQty(data.total, data.unit)}</div>
+                  {data.evening > 0 && <>
+                    <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                    <div style={{ flex: 1 }}>
+                      <div className="weekly-col-label">{SESSION_CONFIG['evening'].icon} शाम</div>
+                      <div className="weekly-col-value text-violet">{formatQty(data.evening, data.unit)}</div>
+                    </div>
+                  </>}
+                  {data.night > 0 && <>
+                    <div className="weekly-vs" style={{ margin: '0 8px' }}>+</div>
+                    <div style={{ flex: 1 }}>
+                      <div className="weekly-col-label">{SESSION_CONFIG['night'].icon} रात</div>
+                      <div className="weekly-col-value text-teal">{formatQty(data.night, data.unit)}</div>
+                    </div>
+                  </>}
+                  <div className="weekly-vs" style={{ margin: '0 8px' }}>=</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="weekly-col-label">कुल</div>
+                    <div className="weekly-col-value text-green">{formatQty(data.total, data.unit)}</div>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Session Tabs — with completion badges */}
+      {/* Session Tabs */}
       <div className="session-tabs">
         {ALL_SESSIONS.map(s => {
           const badge = getSessionBadge(s);
@@ -484,7 +705,7 @@ export default function Home() {
                   position: 'absolute', top: 4, right: 4,
                   width: 16, height: 16, borderRadius: '50%',
                   background: badge.done === badge.total ? 'var(--clr-green)' : 'var(--clr-orange)',
-                  fontSize: '0.55rem', color: '#fff', fontWeight: 700,
+                  fontSize: '0.52rem', color: '#fff', fontWeight: 700,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   border: '1.5px solid var(--clr-bg-deep)',
                 }}>
@@ -496,17 +717,22 @@ export default function Home() {
         })}
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex gap-2 mb-4">
-        <button className="btn btn-primary flex-1" onClick={handleAllNormal} disabled={loadingAll} id="btn-all-normal">
-          {loadingAll ? <span className="spinner" /> : SESSION_CONFIG[session].icon} सब नॉर्मल
+      {/* ===== QUICK ACTION CHIPS ===== */}
+      <div className="action-row">
+        <button className="action-chip gold" onClick={handleAllNormal} disabled={loadingAll} id="btn-all-normal">
+          {loadingAll ? <span className="spinner" style={{ width: 14, height: 14 }} /> : '✅'} सब नॉर्मल
         </button>
-        <button
-          className="btn btn-outline btn-sm btn-icon"
-          onClick={() => { const first = items.find(i => i.isActive); if (first) openBulkEntry(first); }}
-          title="पिछले दिन भरें"
-        >📅</button>
-        <button className="btn btn-outline btn-sm btn-icon" onClick={() => setHolidaySheet(true)} title="छुट्टी mark करें">🎉</button>
+        <button className="action-chip red" onClick={quickZeroAll} disabled={quickZeroLoading}>
+          {quickZeroLoading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : '✗'} सब नहीं मिला
+        </button>
+        <button className="action-chip violet" onClick={copyYesterday} disabled={copyLoading || isToday}>
+          {copyLoading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : '📋'} कल जैसा
+        </button>
+        <button className="action-chip teal"
+          onClick={() => { const first = items.find(i => i.isActive); if (first) openBulkEntry(first); }}>
+          📅 पुरानी Entry
+        </button>
+        <button className="action-chip" onClick={() => setHolidaySheet(true)}>🎉 छुट्टी</button>
       </div>
 
       {/* Quick Grid */}
@@ -514,7 +740,7 @@ export default function Home() {
 
       {/* Today's Full Summary */}
       {todaySummary.some(s => s.dayTotal > 0) && (
-        <div className="card mt-4" style={{ background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.15)' }}>
+        <div className="card mt-4" style={{ background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.14)' }}>
           <div className="section-title">✅ {activeDate === today ? 'आज' : activeDate} का पूरा हिसाब</div>
           {todaySummary.filter(s => s.dayTotal > 0 || Object.keys(s.sessEntries).length > 0).map(({ item, dayTotal, sessions, sessEntries }) => (
             <div key={item.id} className="mb-3">
@@ -535,7 +761,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Bulk Past Entry Sheet */}
+      {/* ===== BULK PAST ENTRY SHEET ===== */}
       <Sheet open={bulkSheet} onClose={() => { setBulkSheet(false); setAutoFillMode(false); }} title="📅 पिछले दिनों की Entry">
         {bulkItem && (
           <>
@@ -561,13 +787,15 @@ export default function Home() {
                     background: 'transparent',
                   }}
                   onClick={async () => {
-                    const activeBulkSession = s;
-                    setBulkSession(activeBulkSession);
+                    const abs = s;
+                    setBulkSession(abs);
                     const rows = [];
                     for (let i = 1; i <= 7; i++) {
-                      const d = new Date(activeDate + 'T00:00:00'); d.setDate(d.getDate() - i);
-                      const dateStr = d.toISOString().split('T')[0];
-                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(e => e.date === dateStr && e.session === activeBulkSession).toArray();
+                      const parts = activeDate.split('-').map(Number);
+                      const d = new Date(parts[0], parts[1]-1, parts[2]);
+                      d.setDate(d.getDate() - i);
+                      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                      const entryList = await db.entries.where('itemId').equals(bulkItem.id).filter(e => e.date === dateStr && e.session === abs).toArray();
                       const entry = entryList[0];
                       rows.push({ id: entry?.id, date: dateStr, qty: entry?.qty != null ? entry.qty : '', note: entry?.note || '' });
                     }
@@ -586,7 +814,7 @@ export default function Home() {
                 padding: '10px 14px',
                 background: autoFillMode ? 'rgba(245,166,35,0.08)' : 'rgba(255,255,255,0.04)',
                 border: autoFillMode ? '1px solid rgba(245,166,35,0.4)' : '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 12, cursor: 'pointer',
+                borderRadius: 14, cursor: 'pointer',
               }}
               onClick={() => setAutoFillMode(m => !m)}
             >
@@ -603,7 +831,7 @@ export default function Home() {
 
             {/* Auto-Fill Panel */}
             {autoFillMode && (
-              <div className="card mb-4" style={{ padding: 14, background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: 14 }}>
+              <div className="card mb-4" style={{ padding: 14, background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: 16 }}>
                 <div className="grid-2 gap-3 mb-3">
                   <div className="input-group">
                     <label className="input-label">Qty ({bulkItem.unit}) *</label>
@@ -637,7 +865,7 @@ export default function Home() {
                   </div>
                 </div>
                 {autoFillQty && autoFillFrom && autoFillTo && (
-                  <div style={{ background: 'rgba(245,166,35,0.08)', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: '0.8rem' }}>
+                  <div style={{ background: 'rgba(245,166,35,0.08)', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: '0.8rem' }}>
                     ℹ️ {formatQty(+autoFillQty, bulkItem.unit)} × हर दिन ({autoFillFrom} से {autoFillTo})
                   </div>
                 )}

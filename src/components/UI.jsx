@@ -41,9 +41,16 @@ export function ToastContainer() {
 // =====================================================
 export function StreakBadge({ streak }) {
   if (!streak || streak === 0) return null;
+  const isMilestone = [7,14,21,30,60,100,365].includes(streak);
   return (
-    <div className="streak-badge">
-      🔥 {streak} दिन
+    <div className="streak-badge" style={{
+      background: isMilestone
+        ? 'linear-gradient(135deg, rgba(245,166,35,0.35), rgba(255,209,102,0.20))'
+        : 'linear-gradient(135deg, rgba(245,166,35,0.18), rgba(255,209,102,0.09))',
+      boxShadow: isMilestone ? '0 0 20px rgba(245,166,35,0.3)' : '0 0 12px rgba(245,166,35,0.15)',
+      animation: isMilestone ? 'pulse 2s infinite' : 'none',
+    }}>
+      🔥 {streak} दिन{isMilestone ? ' 🏆' : ''}
     </div>
   );
 }
@@ -117,7 +124,14 @@ export function Sheet({ open, onClose, title, children }) {
       <div className="overlay" onClick={onClose} />
       <div className="sheet">
         <div className="sheet-handle" />
-        {title && <div className="sheet-title">{title}</div>}
+        {title && (
+          <div className="sheet-title" style={{
+            background: 'linear-gradient(135deg, var(--clr-gold-light), var(--clr-violet-light))',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          }}>{title}</div>
+        )}
         {children}
       </div>
     </>
